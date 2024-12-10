@@ -143,6 +143,44 @@ namespace Sharphound
         [Option(HelpText = "Split the main ldap query into smaller chunks to attempt to reduce server load")]
         public bool PartitionLdapQueries { get; set; }
 
+        // FETCH Options
+        [Option(HelpText = "Use FETCH to aggregate and upload previously collected data. Options: 'adminservice', 'wmi', 'mssql', 'cmpivot', 'dir'")]
+        public string Fetch { get; set; }
+
+        [Option(HelpText = "Number of days behind to collect FETCH results", Default = 7)]
+        public int LookbackDays { get; set; }
+
+        // FETCH cmpivot / mssql / adminservice
+        [Option(HelpText = "Specify an SCCM (ConfigMgr) site code for collection")]
+        public string SiteCode { get; set; }
+
+        // FETCH cmpivot / dir
+        [Option(HelpText = "Path to directory containing FETCH results", Default = "%SystemRoot%\\CCM\\ScriptStore\\")]
+        public string FetchResultsDir { get; set; }
+
+        // FETCH cmpivot / adminservice
+        [Option(HelpText = "Timeout for SCCM to collect FETCH results in minutes", Default = 0)]
+        public int FetchTimeout { get; set; }
+
+        [Option(HelpText = "Specify an SCCM (ConfigMgr) SMS Provider for collection")]
+        public string SmsProvider { get; set; }
+
+        [Option(HelpText = "Specify an SCCM (ConfigMgr) collection ID to retrieve FETCH results from")]
+        public string CollectionId { get; set; }
+
+        // FETCH mssql
+        [Option(HelpText = "Specify an SCCM (ConfigMgr) site database for collection")]
+        public string SiteDatabase { get; set; }
+
+        [Option(HelpText = "Specify the table name prefix", Default = "SpecterOps_BloodHound_")]
+        public string TablePrefix { get; set; }
+
+        // FETCH adminservice
+
+        [Option(HelpText = "Specify the entity name prefix", Default = "BloodHound")]
+        public string EntityPrefix { get; set; }
+
+
         //Loop Options
         [Option('l', "Loop", HelpText = "Loop computer collection")]
         public bool Loop { get; set; }

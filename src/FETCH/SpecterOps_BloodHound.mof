@@ -1,0 +1,68 @@
+[ SMS_Report (TRUE),
+  SMS_Group_Name ("BloodHound Sessions"),
+  SMS_Class_ID ("SpecterOps|BloodHound Sessions|1.0"),
+  Namespace ("root\\\\cimv2") ]
+class BloodHound_Sessions : SMS_Class_Template
+{
+    [ SMS_Report (TRUE), key ]
+    UInt32	InstanceID;
+
+    [ SMS_Report (TRUE) ]
+    DateTime	CollectionDatetime;
+
+    [ SMS_Report (TRUE) ]
+    String	UserSID;
+
+    [ SMS_Report (TRUE) ]
+    DateTime	LastSeen;
+
+    [ SMS_Report (TRUE) ]
+    String	ComputerSID;
+};
+
+[ SMS_Report (TRUE),
+  SMS_Group_Name ("BloodHound UserRights"),
+  SMS_Class_ID ("SpecterOps|BloodHound UserRights|1.0"),
+  Namespace ("root\\\\cimv2") ]
+class BloodHound_UserRights : SMS_Class_Template
+{
+    [ SMS_Report (TRUE), key ]
+    UInt32	InstanceID;
+
+    [ SMS_Report (TRUE) ]
+    DateTime	CollectionDatetime;
+
+    [ SMS_Report (TRUE) ]
+    String	Privilege;
+
+    [ SMS_Report (TRUE) ]
+    String	ObjectIdentifier;
+
+    [ SMS_Report (TRUE) ]
+    String	ObjectType;
+};
+
+[ SMS_Report (TRUE),
+  SMS_Group_Name ("BloodHound LocalGroups"),
+  SMS_Class_ID ("SpecterOps|BloodHound LocalGroups|1.0"),
+  Namespace ("root\\\\cimv2") ]
+class BloodHound_LocalGroups : SMS_Class_Template
+{
+    [ SMS_Report (TRUE), key ]
+    UInt32	InstanceID;
+
+    [ SMS_Report (TRUE) ]
+    DateTime	CollectionDatetime;
+
+    [ SMS_Report (TRUE) ]
+    String	GroupName;
+
+    [ SMS_Report (TRUE) ]
+    String	GroupSID;
+
+    [ SMS_Report (TRUE) ]
+    String	MemberType;
+
+    [ SMS_Report (TRUE) ]
+    String	MemberSID;
+};

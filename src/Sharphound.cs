@@ -21,11 +21,13 @@ using System.DirectoryServices.Protocols;
 using System.IO;
 using System.Linq;
 using System.Security.Principal;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using CommandLine;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Sharphound.Client;
 using Sharphound.Runtime;
 using SharpHoundCommonLib;
@@ -523,28 +525,214 @@ namespace Sharphound {
                     //     cancellationTokenSource.Cancel();
                     // };
 
-                    // Create new chain links
-                    Links<IContext> links = new SharpLinks();
+                    // FETCH retrieval, aggregation, and upload to ingest API
+                    if (!string.IsNullOrEmpty(options.Fetch))
+                    {
 
-                    // Run our chain
-                    context = links.Initialize(context, ldapOptions);
-                    if (context.Flags.IsFaulted)
-                        return;
-                    context = await links.TestConnection(context);
-                    if (context.Flags.IsFaulted)
-                        return;
-                    context = links.SetSessionUserName(options.OverrideUserName, context);
-                    context = links.InitCommonLib(context);
-                    context = await links.GetDomainsForEnumeration(context);
-                    if (context.Flags.IsFaulted)
-                        return;
-                    context = links.StartBaseCollectionTask(context);
-                    context = await links.AwaitBaseRunCompletion(context);
-                    context = links.StartLoopTimer(context);
-                    context = links.StartLoop(context);
-                    context = await links.AwaitLoopCompletion(context);
-                    context = links.SaveCacheFile(context);
-                    links.Finish(context);
+                        // Work in progress
+                        if (options.Fetch == "adminservice")
+                        {
+                            if (!string.IsNullOrEmpty(options.SmsProvider) && !string.IsNullOrEmpty(options.SiteCode))
+                            {
+                                string sessionsQuery = $"{options.EntityPrefix}Sessions";
+                                string userRightsQuery = $"{options.EntityPrefix}UserRights";
+                                string localGroupsQuery = $"{options.EntityPrefix}LocalGroups";
+
+                                JObject sessionsQueryResponse = await Fetch.QuerySccmAdminService(sessionsQuery, options.SmsProvider, options.SiteCode, options.CollectionId, options.FetchTimeout);
+                                //JObject userRightsQueryResponse = await Fetch.QuerySccmAdminService(userRightsQuery, options.SmsProvider, options.SiteCode, options.CollectionId, options.FetchTimeout);
+                                //JObject localGroupsQueryResponse = await Fetch.QuerySccmAdminService(localGroupsQuery, options.SmsProvider, options.SiteCode, options.CollectionId, options.FetchTimeout);
+
+                                List<FetchQueryResult> sessionsProcessed = Fetch.ProcessCMPivotResults(sessionsQueryResponse);
+                                string getFQDN = "Registry('HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters')\r\n| where Property == 'Hostname' or Property == 'Domain'\r\n| summarize Hostname = max(case(Property == 'Hostname', Value, '')), \r\n            Domain = max(case(Property == 'Domain', Value, '')) \r\n  by Device\r\n| project Device, FQDN = strcat(Hostname, '.', Domain), Hostname, Domain";
+                                //List<SiteDatabaseQueryResult> userRightsProcessed = Fetch.ProcessCMPivotResults(userRightsQueryResponse);
+                                //List<SiteDatabaseQueryResult> localGroupsProcessed = Fetch.ProcessCMPivotResults(localGroupsQueryResponse);
+
+                                // Combine all the results into a single list
+                                List<FetchQueryResult> combinedResults = new List<FetchQueryResult>();
+                                combinedResults.AddRange(sessionsProcessed);
+                                //combinedResults.AddRange(userRightsQueryResults);
+                                //combinedResults.AddRange(localGroupsQueryResults);
+
+                                // Format and chunk the combined results
+                                List<JObject> fetchData = Fetch.FormatAndChunkQueryResults(combinedResults);
+
+                                if (fetchData != null)
+                                {
+                                    foreach (JObject chunk in fetchData)
+                                    {
+                                        // Send computers files to the ingest API in batches of 100 per job
+                                        await APIClient.SendItAsync(fetchData);
+                                    }
+                                }
+                                else
+                                {
+                                    logger.LogError($"The site database ({options.SiteDatabase}) did not respond with FETCH data");
+                                }
+                            }
+                            else if (!string.IsNullOrEmpty(options.SmsProvider) || !string.IsNullOrEmpty(options.SiteCode) || !string.IsNullOrEmpty(options.CollectionId))
+                            {
+                                if (string.IsNullOrEmpty(options.SmsProvider)) Console.WriteLine("[!] SmsProvider was not specified");
+                                if (string.IsNullOrEmpty(options.SiteCode)) Console.WriteLine("[!] SiteCode was not specified");
+                                if (string.IsNullOrEmpty(options.CollectionId)) Console.WriteLine("[!] SccmCollectionId was not specified");
+                                Console.WriteLine("[!] Skipping SCCM cmpivot collection");
+                            }
+                        }
+
+                        else if (options.Fetch == "wmi")
+                        {
+                            // Not yet implemented
+                        }
+
+                        // Collect hardware inventory data from the site database
+                        else if (options.Fetch == "mssql")
+                        {
+                            if (!string.IsNullOrEmpty(options.SiteDatabase) && !string.IsNullOrEmpty(options.SiteCode))
+                            {
+                                /*
+                                // Query the site database for sessions, user rights, and local groups
+                                List<FetchQueryResult> sessionsQueryResults = await Fetch.QuerySiteDatabase(options.SiteDatabase, options.SiteCode, options.TablePrefix, "Sessions", options.LookbackDays);
+                                List<FetchQueryResult> userRightsQueryResults = await Fetch.QuerySiteDatabase(options.SiteDatabase, options.SiteCode, options.TablePrefix, "UserRights", options.LookbackDays);
+                                List<FetchQueryResult> localGroupsQueryResults = await Fetch.QuerySiteDatabase(options.SiteDatabase, options.SiteCode, options.TablePrefix, "LocalGroups", options.LookbackDays);
+
+                                // Combine all the results into a single list
+                                List<FetchQueryResult> combinedResults = new List<FetchQueryResult>();
+                                combinedResults.AddRange(sessionsQueryResults);
+                                combinedResults.AddRange(userRightsQueryResults);
+                                combinedResults.AddRange(localGroupsQueryResults);
+
+                                List<JObject> fetchData = Fetch.FormatAndChunkQueryResults(combinedResults);
+
+                                if (fetchData != null)
+                                {
+                                    // Send computers files to the ingest API in batches of 100
+                                    await APIClient.SendItAsync(fetchData);
+                                }
+                                else
+                                {
+                                    logger.LogError($"The site database ({options.SiteDatabase}) did not respond with FETCH data");
+                                }
+                                */
+                                (APIClient adminAPIClient, JToken sharpHoundClient, APIClient signedSharpHoundAPIClient) =
+                                    await APIClient.GetAPIClients();
+
+                                if (signedSharpHoundAPIClient == null)
+                                {
+                                    await Console.Out.WriteLineAsync("[!] Could not find API clients");
+                                    return;
+                                }
+
+                                // Query the site database for sessions, user rights, and local groups
+                                // Send computers files to the ingest API in batches
+                                await Fetch.QueryDatabaseAndSendChunks(adminAPIClient, sharpHoundClient, signedSharpHoundAPIClient,
+                                    "TestLocalGroups", options, logger);
+                                // Sleep to avoid job ending/starting race conditions
+                                Thread.Sleep(5000);
+                                await Fetch.QueryDatabaseAndSendChunks(adminAPIClient, sharpHoundClient, signedSharpHoundAPIClient,
+                                    "TestSessions", options, logger);
+                                Thread.Sleep(5000);
+                                await Fetch.QueryDatabaseAndSendChunks(adminAPIClient, sharpHoundClient, signedSharpHoundAPIClient,
+                                    "TestUserRights", options, logger);
+                            }
+
+                            else
+                            {
+                                if (string.IsNullOrEmpty(options.SiteDatabase)) Console.WriteLine("[!] SiteDatabase was not specified");
+                                if (string.IsNullOrEmpty(options.SiteCode)) Console.WriteLine("[!] SiteCode was not specified");
+                                Console.WriteLine("[!] Skipping SCCM mssql collection");
+                            }
+                        }
+
+                        // Collection with CMPivot
+                        else if (options.Fetch == "cmpivot")
+                        {
+                            if (!string.IsNullOrEmpty(options.SmsProvider) && !string.IsNullOrEmpty(options.SiteCode) && !string.IsNullOrEmpty(options.CollectionId))
+                            {
+                                string fetchResultsDirFormatted = options.FetchResultsDir.Replace(@"\", @"\\");
+                                string query = $"FileContent('{fetchResultsDirFormatted}FetchResults.json')";
+
+                                JObject fileContentQueryResponse = await Fetch.QuerySccmAdminService(query, options.SmsProvider, options.SiteCode, options.CollectionId, options.FetchTimeout);
+                                if (fileContentQueryResponse != null)
+                                {
+                                    List<JObject> fileContentQueryResults = Fetch.PrepareFileContentQueryResults(fileContentQueryResponse);
+                                    await APIClient.SendItAsync(fileContentQueryResults);
+                                }
+                            }
+                            else if (!string.IsNullOrEmpty(options.SmsProvider) || !string.IsNullOrEmpty(options.SiteCode) || !string.IsNullOrEmpty(options.CollectionId))
+                            {
+                                if (string.IsNullOrEmpty(options.SmsProvider)) Console.WriteLine("[!] SmsProvider was not specified");
+                                if (string.IsNullOrEmpty(options.SiteCode)) Console.WriteLine("[!] SiteCode was not specified");
+                                if (string.IsNullOrEmpty(options.CollectionId)) Console.WriteLine("[!] SccmCollectionId was not specified");
+                                Console.WriteLine("[!] Skipping SCCM cmpivot collection");
+                            }
+                        }
+
+                        // Collection from a local or remote directory
+                        else if (options.Fetch == "dir")
+                        {
+                            string uncPattern = @"^\\\\[\w\d.-]+\\[\w\d.-]+(\\)?";
+                            string localDirPattern = @"^[a-zA-Z]:\\";
+
+                            if (!string.IsNullOrEmpty(options.FetchResultsDir))
+                            {
+                                bool isValidPath = Regex.IsMatch(options.FetchResultsDir, uncPattern) ||
+                                                   Regex.IsMatch(options.FetchResultsDir, localDirPattern) ||
+                                                   Directory.Exists(options.FetchResultsDir);
+
+                                if (isValidPath)
+                                {
+                                    try
+                                    {
+                                        List<JObject> fetchResults = await Fetch.GetFetchResultsFromDir(options.FetchResultsDir, options.LookbackDays);
+                                        if (fetchResults != null && fetchResults.Any())
+                                        {
+                                            logger.LogInformation($"Found {fetchResults.Count} FETCH results in {options.FetchResultsDir}");
+                                            await APIClient.SendItAsync(fetchResults);
+                                            logger.LogInformation($"Successfully processed and sent {fetchResults.Count} FETCH results from {options.FetchResultsDir}");
+                                        }
+                                        else
+                                        {
+                                            logger.LogWarning($"No FETCH data found in the specified directory ({options.FetchResultsDir})");
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        logger.LogError($"Error processing FETCH data from {options.FetchResultsDir}: {ex.Message}");
+                                    }
+                                }
+                                else
+                                {
+                                    logger.LogError($"Invalid path specified for FetchResultsDir: {options.FetchResultsDir}");
+                                }
+                            }
+                        }
+                    }
+
+                    else
+                    {
+                        // LDAP collection
+                        // Create new chain links
+                        Links<IContext> links = new SharpLinks();
+
+                        // Run our chain
+                        context = links.Initialize(context, ldapOptions);
+                        if (context.Flags.IsFaulted)
+                            return;
+                        context = await links.TestConnection(context);
+                        if (context.Flags.IsFaulted)
+                            return;
+                        context = links.SetSessionUserName(options.OverrideUserName, context);
+                        context = links.InitCommonLib(context);
+                        context = await links.GetDomainsForEnumeration(context);
+                        if (context.Flags.IsFaulted)
+                            return;
+                        context = links.StartBaseCollectionTask(context);
+                        context = await links.AwaitBaseRunCompletion(context);
+                        context = links.StartLoopTimer(context);
+                        context = links.StartLoop(context);
+                        context = await links.AwaitLoopCompletion(context);
+                        context = links.SaveCacheFile(context);
+                        links.Finish(context);
+                    }
                 });
             } catch (Exception ex) {
                 logger.LogError($"Error running SharpHound: {ex.Message}\n{ex.StackTrace}");
