@@ -362,115 +362,6 @@ namespace Sharphound
             return null;
         }
 
-        public static async IAsyncEnumerable<FetchQueryResult> QuerySiteDatabase(
-            string siteDatabaseFqdn,
-            string siteCode,
-            string tablePrefix,
-            string collectionType,
-            int lookbackDays,
-            int pageSize = 1000)
-        {
-            string connectionString = $"Server={siteDatabaseFqdn};Database=CM_{siteCode};Integrated Security=True;";
-
-            List<string> rowNames = new List<string>();
-            if (collectionType == "Sessions" || collectionType == "TestSessions")
-            {
-                rowNames.Add("UserSID00");
-                rowNames.Add("LastSeen00");
-                rowNames.Add("ComputerSID00");
-            }
-            else if (collectionType == "UserRights" || collectionType == "TestUserRights")
-            {
-                rowNames.Add("Privilege00");
-                rowNames.Add("ObjectIdentifier00");
-                rowNames.Add("ObjectType00");
-            }
-            else if (collectionType == "LocalGroups" || collectionType == "TestLocalGroups")
-            {
-                rowNames.Add("GroupName00");
-                rowNames.Add("GroupSID00");
-                rowNames.Add("MemberType00");
-                rowNames.Add("MemberSID00");
-            }
-            else
-            {
-                throw new ArgumentException("Invalid collection type");
-            }
-
-            // Get collection data organized by machine where data originated, filter to lookback period 
-            string baseQuery = @$"
-                WITH FilteredCollections AS (
-                    SELECT 
-                        MachineID,
-                        CollectionDatetime00,
-                        {string.Join(",\r\n", rowNames)}
-                    FROM {tablePrefix}{collectionType}_DATA
-                    WHERE CollectionDatetime00 >= DATEADD(day, -{lookbackDays}, GETDATE())
-                )
-                SELECT 
-                    FC.MachineID,
-                    FC.CollectionDatetime00,
-                    {string.Join(",\r\n", rowNames.Select(r => $"FC.{r}"))},
-                    SD.SID0,
-                    SD.Netbios_Name0,
-                    SD.Full_Domain_Name0
-                FROM FilteredCollections FC
-                LEFT JOIN System_DISC SD ON FC.MachineID = SD.ItemKey
-                ORDER BY FC.CollectionDatetime00 DESC
-                OFFSET @Offset ROWS
-                FETCH NEXT @PageSize ROWS ONLY";
-
-            using (SqlConnection connection = new SqlConnection(connectionString))
-            {
-                await connection.OpenAsync();
-
-                int offset = 0;
-                bool hasMoreResults = true;
-
-                while (hasMoreResults)
-                {
-                    using (SqlCommand command = new SqlCommand(baseQuery, connection))
-                    {
-                        // Set the timeout to 300 seconds (5 minutes)
-                        command.CommandTimeout = 300; 
-                        command.Parameters.AddWithValue("@Offset", offset);
-                        command.Parameters.AddWithValue("@PageSize", pageSize);
-
-                        using (SqlDataReader reader = await command.ExecuteReaderAsync())
-                        {
-                            if (!reader.HasRows)
-                            {
-                                hasMoreResults = false;
-                                continue;
-                            }
-
-                            while (await reader.ReadAsync())
-                            {
-                                var result = new FetchQueryResult
-                                {
-                                    CollectedComputerMachineID = reader["MachineID"].ToString(),
-                                    CollectionDatetime = Convert.ToDateTime(reader["CollectionDatetime00"]),
-                                    CollectionData = new Dictionary<string, string>(),
-                                    CollectedComputerSID = reader["SID0"].ToString(),
-                                    CollectedComputerNetbiosName = reader["Netbios_Name0"].ToString(),
-                                    CollectedComputerFullDomainName = reader["Full_Domain_Name0"].ToString()
-                                };
-
-                                foreach (string rowName in rowNames)
-                                {
-                                    result.CollectionData[rowName] = reader[rowName].ToString();
-                                }
-
-                                yield return result;
-                            }
-                        }
-                    }
-
-                    offset += pageSize;
-                }
-            }
-        }
-
         public static async Task QueryDatabaseAndSendChunks(APIClient adminAPIClient, JToken sharpHoundClient,
             APIClient signedSharpHoundAPIClient, string tableName, Options options, ILogger logger)
         {
@@ -583,13 +474,6 @@ namespace Sharphound
                             }
 
                             string computerSID = result.CollectedComputerSID;
-                            if (string.IsNullOrEmpty(computerSID))
-                            {
-                                computerSID = $"S-1-5-21-1642199630-664550351-1777980924-{result.CollectedComputerMachineID}";
-                                result.CollectedComputerSID = computerSID;
-                                result.CollectedComputerNetbiosName = result.CollectedComputerMachineID;
-                                result.CollectedComputerFullDomainName = "APERTURE.LOCAL";
-                            }
 
                             if (!computerData.ContainsKey(computerSID))
                             {
@@ -609,13 +493,10 @@ namespace Sharphound
             switch (collectionType)
             {
                 case "Sessions":
-                case "TestSessions":
                     return new List<string> { "UserSID00", "LastSeen00", "ComputerSID00" };
                 case "UserRights":
-                case "TestUserRights":
                     return new List<string> { "Privilege00", "ObjectIdentifier00", "ObjectType00" };
                 case "LocalGroups":
-                case "TestLocalGroups":
                     return new List<string> { "GroupName00", "GroupSID00", "MemberType00", "MemberSID00" };
                 default:
                     throw new ArgumentException("Invalid collection type");

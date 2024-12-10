@@ -588,30 +588,6 @@ namespace Sharphound {
                         {
                             if (!string.IsNullOrEmpty(options.SiteDatabase) && !string.IsNullOrEmpty(options.SiteCode))
                             {
-                                /*
-                                // Query the site database for sessions, user rights, and local groups
-                                List<FetchQueryResult> sessionsQueryResults = await Fetch.QuerySiteDatabase(options.SiteDatabase, options.SiteCode, options.TablePrefix, "Sessions", options.LookbackDays);
-                                List<FetchQueryResult> userRightsQueryResults = await Fetch.QuerySiteDatabase(options.SiteDatabase, options.SiteCode, options.TablePrefix, "UserRights", options.LookbackDays);
-                                List<FetchQueryResult> localGroupsQueryResults = await Fetch.QuerySiteDatabase(options.SiteDatabase, options.SiteCode, options.TablePrefix, "LocalGroups", options.LookbackDays);
-
-                                // Combine all the results into a single list
-                                List<FetchQueryResult> combinedResults = new List<FetchQueryResult>();
-                                combinedResults.AddRange(sessionsQueryResults);
-                                combinedResults.AddRange(userRightsQueryResults);
-                                combinedResults.AddRange(localGroupsQueryResults);
-
-                                List<JObject> fetchData = Fetch.FormatAndChunkQueryResults(combinedResults);
-
-                                if (fetchData != null)
-                                {
-                                    // Send computers files to the ingest API in batches of 100
-                                    await APIClient.SendItAsync(fetchData);
-                                }
-                                else
-                                {
-                                    logger.LogError($"The site database ({options.SiteDatabase}) did not respond with FETCH data");
-                                }
-                                */
                                 (APIClient adminAPIClient, JToken sharpHoundClient, APIClient signedSharpHoundAPIClient) =
                                     await APIClient.GetAPIClients();
 
@@ -624,14 +600,14 @@ namespace Sharphound {
                                 // Query the site database for sessions, user rights, and local groups
                                 // Send computers files to the ingest API in batches
                                 await Fetch.QueryDatabaseAndSendChunks(adminAPIClient, sharpHoundClient, signedSharpHoundAPIClient,
-                                    "TestLocalGroups", options, logger);
+                                    "LocalGroups", options, logger);
                                 // Sleep to avoid job ending/starting race conditions
                                 Thread.Sleep(5000);
                                 await Fetch.QueryDatabaseAndSendChunks(adminAPIClient, sharpHoundClient, signedSharpHoundAPIClient,
-                                    "TestSessions", options, logger);
+                                    "Sessions", options, logger);
                                 Thread.Sleep(5000);
                                 await Fetch.QueryDatabaseAndSendChunks(adminAPIClient, sharpHoundClient, signedSharpHoundAPIClient,
-                                    "TestUserRights", options, logger);
+                                    "UserRights", options, logger);
                             }
 
                             else

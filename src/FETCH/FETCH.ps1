@@ -292,10 +292,14 @@ function Remove-OldInstances {
     $instances = Get-WmiObject -Namespace $WmiNamespace -Class $WmiClassName -ErrorAction Stop
     $cutoffDate = (Get-Date).AddDays(-$DeleteOlderThanDays)
 
-    $instancesToDelete = $instances | Where-Object { $_.CollectionDatetime -lt $cutoffDate }
-    
+    # Convert string datetime to comparable DateTime object
+    $instancesToDelete = $instances | Where-Object { 
+        $collectionTime = [System.Management.ManagementDateTimeConverter]::ToDateTime($_.CollectionDatetime)
+        $collectionTime -lt $cutoffDate 
+    }
+
     if ($instancesToDelete.Count -gt 0) {
-        Write-Log "VERBOSE" "Found $($instancesToDelete.Count) instances older than $DeleteOlderThanDays days. Deleting them."
+        Write-Log "INFO" "Found $($instancesToDelete.Count) instances older than $DeleteOlderThanDays days in $WmiClassName. Deleting them."
         foreach ($instance in $instancesToDelete) {
             try {
                 $instance.Delete()
@@ -308,7 +312,7 @@ function Remove-OldInstances {
         Write-Log "VERBOSE" "Cleanup complete. Remaining instances: $((Get-WmiObject -Namespace $WmiNamespace -Class $wmiClassName).Count)"
     }
     else {
-        Write-Log "VERBOSE" "Found no instances older than $DeleteOlderThanDays days in $WmiClassName. No cleanup needed."
+        Write-Log "INFO" "Found no instances older than $DeleteOlderThanDays days in $WmiClassName. No cleanup needed."
     }
 }
 
@@ -480,6 +484,14 @@ try {
 
     # Output to WMI
     if ($Wmi) {
+
+        # Delete stale data before execution so that old instances aren't identified as duplicates and we get the latest
+        if ($null -ne $DeleteOlderThanDays) {
+            Remove-OldInstances -DeleteOlderThanDays $DeleteOlderThanDays -WmiNamespace $WmiNamespace -WmiClassName "$WmiClassPrefix`Sessions"
+            Remove-OldInstances -DeleteOlderThanDays $DeleteOlderThanDays -WmiNamespace $WmiNamespace -WmiClassName "$WmiClassPrefix`UserRights"
+            Remove-OldInstances -DeleteOlderThanDays $DeleteOlderThanDays -WmiNamespace $WmiNamespace -WmiClassName "$WmiClassPrefix`LocalGroups"
+        }
+
         Write-Log "INFO" "Writing results to: 
                                         $WmiNamespace\$WmiClassPrefix`Sessions
                                         $WmiNamespace\$WmiClassPrefix`UserRights
@@ -1017,12 +1029,6 @@ try {
     # Write to stdout if specified
     if ($StdOut) {
         Write-Log "OUTPUT" $jsonOutput
-    }
-
-    if ($Wmi -and $null -ne $DeleteOlderThanDays) {
-        Remove-OldInstances -DeleteOlderThanDays $DeleteOlderThanDays -WmiNamespace $WmiNamespace -WmiClassName "$WmiClassPrefix`Sessions"
-        Remove-OldInstances -DeleteOlderThanDays $DeleteOlderThanDays -WmiNamespace $WmiNamespace -WmiClassName "$WmiClassPrefix`UserRights"
-        Remove-OldInstances -DeleteOlderThanDays $DeleteOlderThanDays -WmiNamespace $WmiNamespace -WmiClassName "$WmiClassPrefix`LocalGroups"
     }
 
 } catch {
