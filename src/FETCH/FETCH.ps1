@@ -484,14 +484,6 @@ try {
 
     # Output to WMI
     if ($Wmi) {
-
-        # Delete stale data before execution so that old instances aren't identified as duplicates and we get the latest
-        if ($null -ne $DeleteOlderThanDays) {
-            Remove-OldInstances -DeleteOlderThanDays $DeleteOlderThanDays -WmiNamespace $WmiNamespace -WmiClassName "$WmiClassPrefix`Sessions"
-            Remove-OldInstances -DeleteOlderThanDays $DeleteOlderThanDays -WmiNamespace $WmiNamespace -WmiClassName "$WmiClassPrefix`UserRights"
-            Remove-OldInstances -DeleteOlderThanDays $DeleteOlderThanDays -WmiNamespace $WmiNamespace -WmiClassName "$WmiClassPrefix`LocalGroups"
-        }
-
         Write-Log "INFO" "Writing results to: 
                                         $WmiNamespace\$WmiClassPrefix`Sessions
                                         $WmiNamespace\$WmiClassPrefix`UserRights
@@ -518,6 +510,12 @@ try {
             "ComputerSID" = "string"
         }
         Add-WmiClass -WmiNamespace $WmiNamespace -WmiClassPrefix $WmiClassPrefix -CollectionType "Sessions" -KeyProperty $keyProp -Properties $props
+        
+        # Delete stale data before execution so that old instances aren't identified as duplicates and we get the latest
+        if ($null -ne $DeleteOlderThanDays) {
+            Remove-OldInstances -DeleteOlderThanDays $DeleteOlderThanDays -WmiNamespace $WmiNamespace -WmiClassName "$WmiClassPrefix`Sessions"
+        }
+        
         $existingSessions = Get-WmiObject -Namespace $WmiNamespace -Class $WmiClassPrefix`Sessions
     }
 
@@ -668,6 +666,12 @@ try {
             "ObjectType" = "string"
         }
         Add-WmiClass -WmiNamespace $WmiNamespace -WmiClassPrefix $WmiClassPrefix -CollectionType "UserRights" -KeyProperty $keyProp -Properties $props
+
+        # Delete stale data before execution so that old instances aren't identified as duplicates and we get the latest
+        if ($null -ne $DeleteOlderThanDays) {
+            Remove-OldInstances -DeleteOlderThanDays $DeleteOlderThanDays -WmiNamespace $WmiNamespace -WmiClassName "$WmiClassPrefix`UserRights"
+        }
+
         $existingRights = Get-WmiObject -Namespace $WmiNamespace -Class $WmiClassPrefix`UserRights
     }
 
@@ -765,6 +769,12 @@ try {
             "MemberSID" = "string"
         }
         Add-WmiClass -WmiNamespace $WmiNamespace -WmiClassPrefix $WmiClassPrefix -CollectionType "LocalGroups" -KeyProperty $keyProp -Properties $props
+
+        # Delete stale data before execution so that old instances aren't identified as duplicates and we get the latest
+        if ($null -ne $DeleteOlderThanDays) {
+            Remove-OldInstances -DeleteOlderThanDays $DeleteOlderThanDays -WmiNamespace $WmiNamespace -WmiClassName "$WmiClassPrefix`LocalGroups"
+        }
+        
         $existingGroupMembers = Get-WmiObject -Namespace $WmiNamespace -Class $WmiClassPrefix`LocalGroups
     }
 
