@@ -428,59 +428,6 @@ namespace Sharphound
             }
         }
 
-        public static async Task QueryDatabaseAndSendChunks(APIClient userAPIClient, APIClient sharpHoundAPIClient, string tableName, Options options, ILogger logger)
-        {
-            try
-            {
-                // Create and start job for SharpHound client
-                var createJobResult = await userAPIClient.CreateJobAsync(sharpHoundAPIClient.Id);
-                if (createJobResult.StatusCode != HttpStatusCode.OK)
-                {
-                    await Console.Out.WriteLineAsync("[!] Could not create a job for SharpHound API client");
-                    return;
-                }
-
-                JArray jobs = await sharpHoundAPIClient.GetJobsAsync();
-                if (jobs.Count == 0)
-                {
-                    logger.LogError("No jobs found");
-                    return;
-                }
-                JObject nextJob = jobs[0] as JObject;
-                await sharpHoundAPIClient.StartJobAsync((int)nextJob["id"]);
-
-                // Number of computers to fetch from the database and process in each chunk
-                const int computersPerChunk = 300; 
-                int totalComputersProcessed = 0;
-
-                logger.LogInformation($"Querying table: {tableName}");
-
-                bool hasMoreData = true;
-                while (hasMoreData)
-                {
-                    var computerData = await FetchNextComputerChunk(options.SiteDatabase, options.SiteCode, options.TablePrefix, 
-                        tableName, options.LookbackDays, computersPerChunk, totalComputersProcessed);
-
-                    if (computerData.Count == 0)
-                    {
-                        hasMoreData = false;
-                        continue;
-                    }
-
-                    await SendFormattedResults(sharpHoundAPIClient, computerData);
-                    totalComputersProcessed += computerData.Count;
-                    logger.LogInformation($"Processed {totalComputersProcessed} computers for {tableName}");
-                }
-
-                await sharpHoundAPIClient.EndJobAsync();
-                logger.LogInformation($"Total computers processed for {tableName}: {totalComputersProcessed}");
-            }
-            catch (Exception ex)
-            {
-                logger.LogError($"Error processing or sending data: {ex.Message}");
-            }
-        }
-
         private static async Task<Dictionary<string, List<FetchQueryResult>>> FetchNextComputerChunk(
             string siteDatabaseFqdn, string siteCode, string tablePrefix, string collectionType,
             int lookbackDays, int computersPerChunk, int offset)
@@ -572,23 +519,6 @@ namespace Sharphound
                 default:
                     throw new ArgumentException("Invalid collection type");
             }
-        }
-
-        private static async Task SendFormattedResults(APIClient apiClient, Dictionary<string, List<FetchQueryResult>> computerResults)
-        {
-            var formattedResults = new JObject
-            {
-                ["meta"] = new JObject
-                {
-                    ["count"] = computerResults.Count,
-                    ["type"] = "computers",
-                    ["version"] = 5,
-                    ["methods"] = 107028
-                },
-                ["data"] = new JArray(computerResults.Select(kvp => FormatComputerData(kvp.Key, kvp.Value)))
-            };
-
-            await apiClient.PostIngestAsync(Encoding.UTF8.GetBytes(formattedResults.ToString(Formatting.None)));
         }
 
         private static async Task SendFormattedResultsFileUpload(APIClient apiClient, int jobId, Dictionary<string, List<FetchQueryResult>> computerResults)

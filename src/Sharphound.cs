@@ -608,7 +608,6 @@ namespace Sharphound {
                                 success = await Fetch.QueryDatabaseAndSendChunksFileUpload(userAPIClient, "UserRights", options, logger);
                                 if (!success) return;
                             }
-
                             else
                             {
                                 if (string.IsNullOrEmpty(options.SiteDatabase)) Console.WriteLine("[!] SiteDatabase was not specified");
