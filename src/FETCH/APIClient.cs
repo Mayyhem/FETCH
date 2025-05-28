@@ -17,27 +17,57 @@ namespace Sharphound
 {
     public class APIClient
     {
+        public string Id { get; set; }
+        public string Name { get; set; }
+        public string TokenId { get; set; }
+        public string TokenKey { get; set; }
+
         private HttpClient _httpClient;
         private string _scheme;
         private string _host;
         private int _port;
-        private Credentials _credentials;
         private string _userAgent;
 
-        public APIClient(HttpClient httpClient, string scheme, string host, int port, Credentials credentials, string userAgent = @"sharphound/2.1.9.0")
+        public APIClient(string scheme, string host, int port, string tokenId, string tokenKey, string proxy = "")
         {
-            _httpClient = httpClient;
             _scheme = scheme;
             _host = host;
             _port = port;
-            _credentials = credentials;
-            _userAgent = userAgent;
+
+            TokenId = tokenId;
+            TokenKey = tokenKey;
+
+            // Initialize HTTP client handler
+            var httpHandler = new HttpClientHandler();
+
+            // Proxy settings
+            if (!string.IsNullOrEmpty(proxy))
+            {
+                var trustAllCerts = new Fetch.TrustAllCertsPolicy();
+                ServicePointManager.ServerCertificateValidationCallback = trustAllCerts.ValidateCertificate;
+                httpHandler.Proxy = new WebProxy(proxy);
+            }
+
+            // Initialize authentication handler
+            var authHandler = new AuthSigner(tokenKey, tokenId, httpHandler);
+
+            // Initialize HttpClient
+            _httpClient = new HttpClient(authHandler);
+
+            // Initialize User Agent Header
+            var header = new ProductHeaderValue("sharphound",
+                Assembly.GetExecutingAssembly().GetName().Version.ToString());
+            _userAgent = header.ToString();
+            _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue(header));
         }
 
-        public static void LoadEnvVariablesFromFile()
+        public static bool LoadEnvVariablesFromFile(string envFilePath = "")
         {
-            string basePath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            string envFilePath = Path.Combine(basePath, ".env");
+            if (string.IsNullOrEmpty(envFilePath))
+            {
+                string basePath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                envFilePath = Path.Combine(basePath, ".env");
+            }
 
             if (File.Exists(envFilePath))
             {
@@ -51,46 +81,28 @@ namespace Sharphound
                         Environment.SetEnvironmentVariable(key, value);
                     }
                 }
+                return true;
             }
+            else
+            {
+                Console.WriteLine("[!] The specified environment variables file does not exist");
+                return false;
+            }
+
         }
 
-        public static void LoadSpecificEnvVariables(out string DOMAIN, out int PORT, out string SCHEME, out string SHARPHOUND_USER_AGENT, out string SHARPHOUND_CLIENT_NAME, out string TOKEN_ID, out string TOKEN_KEY)
+        public static void LoadSpecificEnvVariables(out string domain, out int port, out string scheme, out string sharpHoundUserAgent, 
+            out string sharpHoundClientName, out string userTokenId, out string userTokenKey, out string clientTokenId, out string clientTokenKey)
         {
-            DOMAIN = Environment.GetEnvironmentVariable("DOMAIN");
-            int.TryParse(Environment.GetEnvironmentVariable("PORT"), out PORT);
-            SCHEME = Environment.GetEnvironmentVariable("SCHEME");
-            SHARPHOUND_USER_AGENT = Environment.GetEnvironmentVariable("SHARPHOUND_USER_AGENT");
-            SHARPHOUND_CLIENT_NAME = Environment.GetEnvironmentVariable("SHARPHOUND_CLIENT_NAME");
-            TOKEN_ID = Environment.GetEnvironmentVariable("TOKEN_ID");
-            TOKEN_KEY = Environment.GetEnvironmentVariable("TOKEN_KEY");
-        }
-
-        public static APIClient InitializeAPIClient(string TOKEN_ID, string TOKEN_KEY, string SCHEME, string DOMAIN, int PORT)
-        {
-            // Initialize Credentials
-            Credentials adminCredentials = new Credentials(TOKEN_ID, TOKEN_KEY);
-
-            // Initialize HTTP client handler
-            var httpHandler = new HttpClientHandler();
-
-            // Proxy settings
-            //var trustAllCerts = new Fetch.TrustAllCertsPolicy();
-            //ServicePointManager.ServerCertificateValidationCallback = trustAllCerts.ValidateCertificate;
-            //httpHandler.Proxy = new WebProxy("http://127.0.0.1:8080");
-
-            // Initialize authentication handler
-            var authHandler = new AuthSigner(adminCredentials.TokenKey, adminCredentials.TokenId, httpHandler);
-
-            // Initialize HttpClient
-            var client = new HttpClient(authHandler);
-
-            // Initialize User Agent Header
-            var header = new ProductHeaderValue("sharphound",
-                Assembly.GetExecutingAssembly().GetName().Version.ToString());
-            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue(header));
-
-            // Initialize and return APIClient
-            return new APIClient(client, SCHEME, DOMAIN, PORT, adminCredentials);
+            domain = Environment.GetEnvironmentVariable("DOMAIN");
+            int.TryParse(Environment.GetEnvironmentVariable("PORT"), out port);
+            scheme = Environment.GetEnvironmentVariable("SCHEME");
+            sharpHoundUserAgent = Environment.GetEnvironmentVariable("SHARPHOUND_USER_AGENT");
+            sharpHoundClientName = Environment.GetEnvironmentVariable("SHARPHOUND_CLIENT_NAME");
+            userTokenId = Environment.GetEnvironmentVariable("USER_TOKEN_ID");
+            userTokenKey = Environment.GetEnvironmentVariable("USER_TOKEN_KEY");
+            clientTokenId = Environment.GetEnvironmentVariable("CLIENT_TOKEN_ID");
+            clientTokenKey = Environment.GetEnvironmentVariable("CLIENT_TOKEN_KEY");
         }
 
         public static byte[] Compress(string toCompress)
@@ -151,7 +163,7 @@ namespace Sharphound
                 if (response != null)
                 {
                     if (response.StatusCode != HttpStatusCode.OK && response.StatusCode != HttpStatusCode.Accepted
-                        && response.StatusCode != HttpStatusCode.Continue)
+                        && response.StatusCode != HttpStatusCode.Continue && response.StatusCode != HttpStatusCode.Created)
                     {
                         await Console.Out.WriteLineAsync($"[!] Did not receive an OK/Accept/Continue response from the server: {response.StatusCode}");
                     }
@@ -190,10 +202,10 @@ namespace Sharphound
             return null;
         }
 
-        public static async Task<JToken> CheckIfSharpHoundClientExists(APIClient adminClient, string sharpHoundClientName)
+        public async Task<JToken> CheckIfSharpHoundClientExists(string sharpHoundClientName)
         {
             Console.WriteLine("[*] Checking if SharpHound client " + sharpHoundClientName + " exists");
-            JObject getClientsResponse = await adminClient.GetClientsAsync();
+            JObject getClientsResponse = await GetClientsAsync();
             if (getClientsResponse != null)
             {
                 JArray clients = (JArray)getClientsResponse["data"];
@@ -257,7 +269,85 @@ namespace Sharphound
             return null;
         }
 
-        public async Task<HttpResponseMessage> CreateJobAsync(APIClient adminAPIClient, JToken sharpHoundClient)
+        public async Task<HttpResponseMessage> CreateFileUploadJobAsync()
+        {
+            // Create the HTTP request
+            var request = CreateRequestMessage("POST", $"/api/v2/file-upload/start");
+
+            // Send the request
+            Console.WriteLine($"[*] Creating job for file upload at {DateTime.UtcNow}");
+            HttpResponseMessage response = await SendRequestAsync(request);
+            return response;
+        }
+
+        public async Task<JArray> GetFileUploadJobsAsync()
+        {
+            // Create the HTTP request
+            var request = CreateRequestMessage("GET", $"/api/v2/file-upload");
+
+            // Send the request
+            Console.WriteLine($"[*] Getting file upload jobs");
+            HttpResponseMessage response = await SendRequestAsync(request);
+            var responseContent = await response.Content.ReadAsStringAsync();
+            return (JArray)JObject.Parse(responseContent)["data"];
+        }
+
+        public async Task<HttpResponseMessage> UploadFileAsync(int jobId, byte[] body, int totalPosts = 0, int thisPostNum = 0)
+        {
+            // Create the HTTP request
+            var request = CreateRequestMessage("POST", $"/api/v2/file-upload/{jobId}", body);
+
+            if (totalPosts > 0)
+            {
+                Console.WriteLine($"[*] Sending FETCH data chunk {thisPostNum} of {totalPosts} to API for ingestion");
+            }
+
+            // Send the request
+            return await SendRequestAsync(request);
+        }
+
+        public async Task<HttpResponseMessage> EndFileUploadJobAsync(int jobId)
+        {
+            // Create the HTTP request
+            var request = CreateRequestMessage("POST", $"/api/v2/file-upload/{jobId}/end");
+
+            // Send the request
+            Console.WriteLine($"[*] Ending file upload job at {DateTime.UtcNow}");
+            HttpResponseMessage response = await SendRequestAsync(request);
+            return response;
+        }
+
+        public async Task SendItFileUploadAsync(List<JObject> bloodHoundDataChunks)
+        {
+            // Create job for SharpHound client
+            HttpResponseMessage response = await CreateFileUploadJobAsync();
+            var responseContent = await response.Content.ReadAsStringAsync();
+            int jobId = (int)JObject.Parse(responseContent)["data"]["id"];
+
+            // Get the job we created and start it
+            JArray jobs = await GetFileUploadJobsAsync();
+            if (jobs.Count == 0)
+            {
+                Console.WriteLine("[!] No jobs found");
+                return;
+            }
+
+            // Prepare datazt
+            int totalPosts = bloodHoundDataChunks.Count();
+            int postsLeft = totalPosts;
+            foreach (JObject chunk in bloodHoundDataChunks)
+            {
+                // Send data to ingest
+                postsLeft--;
+                response = await UploadFileAsync(jobId, Encoding.UTF8.GetBytes(chunk.ToString(Formatting.None)), totalPosts, totalPosts - postsLeft);
+
+            }
+            // Mark the job as done so the ingest API scoops it up
+            await EndFileUploadJobAsync(jobId);
+        }
+
+
+        public async Task<HttpResponseMessage> CreateJobAsync(string sharpHoundClientId)
         {
             // Set up the job data
             bool adStructureCollection = true;
@@ -282,11 +372,11 @@ namespace Sharphound
             var body = JsonConvert.SerializeObject(data);
 
             // Create the HTTP request
-            var request = CreateRequestMessage("POST", $"/api/v2/clients/{sharpHoundClient["id"]}/jobs", Encoding.UTF8.GetBytes(body));
+            var request = CreateRequestMessage("POST", $"/api/v2/clients/{sharpHoundClientId}/jobs", Encoding.UTF8.GetBytes(body));
 
             // Send the request
-            Console.WriteLine($"[*] Creating job for SharpHound client at {DateTime.UtcNow}");
-            HttpResponseMessage response = await adminAPIClient.SendRequestAsync(request);
+            Console.WriteLine($"[*] Creating job for SharpHound API client at {DateTime.UtcNow}");
+            HttpResponseMessage response = await SendRequestAsync(request);
             return response;
         }
 
@@ -298,6 +388,26 @@ namespace Sharphound
             var response = await SendRequestAsync(request);
             var responseContent = await response.Content.ReadAsStringAsync();
             return (JArray)JObject.Parse(responseContent)["data"];
+        }
+
+        public async Task<JToken> GetPermissionsAsync()
+        {
+            var request = CreateRequestMessage("GET", "/api/v2/permissions");
+
+            Console.WriteLine("[*] Getting permissions for SharpHound client");
+            var response = await SendRequestAsync(request);
+            var responseContent = await response.Content.ReadAsStringAsync();
+            return JObject.Parse(responseContent)["data"];
+        }
+
+        public async Task<JToken> GetSelfAsync()
+        {
+            var request = CreateRequestMessage("GET", "/api/v2/self");
+
+            Console.WriteLine($"[*] Getting ID for token {TokenId}");
+            var response = await SendRequestAsync(request);
+            var responseContent = await response.Content.ReadAsStringAsync();
+            return JObject.Parse(responseContent)["data"];
         }
 
         public async Task<HttpResponseMessage> StartJobAsync(int jobId)
@@ -352,50 +462,20 @@ namespace Sharphound
             return await SendRequestAsync(request);
         }
 
-        public static async Task SendItAsync(List<JObject> bloodHoundDataChunks)
+        public async Task SendItAsync(string sharpHoundClientId, List<JObject> bloodHoundDataChunks)
         {
-            // Get environment variables from %USERPROFILE%\.env
-            LoadEnvVariablesFromFile();
-            LoadSpecificEnvVariables(out string DOMAIN, out int PORT, out string SCHEME, out string SHARPHOUND_USER_AGENT, out string SHARPHOUND_CLIENT_NAME, out string TOKEN_ID, out string TOKEN_KEY);
-
-            // Initialize API client using admin token
-            APIClient adminAPIClient = InitializeAPIClient(TOKEN_ID, TOKEN_KEY, SCHEME, DOMAIN, PORT);
-
-            // Check if a SharpHound ingest client exists and get a token for it, otherwise create one
-            JToken sharpHoundClient = await CheckIfSharpHoundClientExists(adminAPIClient, SHARPHOUND_CLIENT_NAME);
-
-            if (sharpHoundClient != null)
-            {
-                JObject newTokenForExistingClient = await adminAPIClient.GetNewClientTokenAsync(sharpHoundClient["id"].ToString());
-                sharpHoundClient["token"] = newTokenForExistingClient;
-            }
-            else
-            {
-                JObject createdClient = await adminAPIClient.CreateClientAsync(SHARPHOUND_CLIENT_NAME, "sharphound");
-                if (createdClient != null)
-                {
-                    sharpHoundClient = createdClient["data"] as JObject;
-                }
-            }
-
-            if (sharpHoundClient == null) return;
-
             // Create job for SharpHound client
-            HttpResponseMessage response = await adminAPIClient.CreateJobAsync(adminAPIClient, sharpHoundClient);
-
-            // Create API client for SharpHound client
-            Credentials sharpHoundClientCreds = new Credentials(sharpHoundClient["token"]["data"]["id"].ToString(), sharpHoundClient["token"]["data"]["key"].ToString());
-            APIClient sharpHoundAPIClientSigned = InitializeAPIClient(sharpHoundClientCreds.TokenId, sharpHoundClientCreds.TokenKey, SCHEME, DOMAIN, PORT);
+            HttpResponseMessage response = await CreateJobAsync(sharpHoundClientId);
 
             // Get the job we created and start it
-            JArray jobs = await sharpHoundAPIClientSigned.GetJobsAsync();
+            JArray jobs = await GetJobsAsync();
             if (jobs.Count == 0)
             {
                 Console.WriteLine("[!] No jobs found");
                 return;
             }
             JObject nextJob = jobs[0] as JObject;
-            await sharpHoundAPIClientSigned.StartJobAsync((int)nextJob["id"]);
+            await StartJobAsync((int)nextJob["id"]);
 
             // Prepare data
             int totalPosts = bloodHoundDataChunks.Count();
@@ -404,57 +484,98 @@ namespace Sharphound
             {
                 // Send data to ingest
                 postsLeft--;
-                response = await sharpHoundAPIClientSigned.PostIngestAsync(Encoding.UTF8.GetBytes(chunk.ToString(Formatting.None)), totalPosts, totalPosts - postsLeft);
+                response = await PostIngestAsync(Encoding.UTF8.GetBytes(chunk.ToString(Formatting.None)), totalPosts, totalPosts - postsLeft);
 
             }
             // Mark the job as done so the ingest API scoops it up
-            await sharpHoundAPIClientSigned.EndJobAsync();
+            await EndJobAsync();
         }
 
-        public static async Task<(APIClient, JToken, APIClient)> GetAPIClients()
+        public static async Task<APIClient> GetAPIClient(string envFilePath, string proxy)
         {
             // Get environment variables from %USERPROFILE%\.env
-            LoadEnvVariablesFromFile();
-            LoadSpecificEnvVariables(out string DOMAIN, out int PORT, out string SCHEME, out string SHARPHOUND_USER_AGENT, out string SHARPHOUND_CLIENT_NAME, out string TOKEN_ID, out string TOKEN_KEY);
-
-            // Initialize API client using admin token
-            APIClient adminAPIClient = InitializeAPIClient(TOKEN_ID, TOKEN_KEY, SCHEME, DOMAIN, PORT);
-
-            // Check if a SharpHound ingest client exists and get a token for it, otherwise create one
-            JToken sharpHoundClient = await CheckIfSharpHoundClientExists(adminAPIClient, SHARPHOUND_CLIENT_NAME);
-
-            if (sharpHoundClient != null)
-            {
-                JObject newTokenForExistingClient = await adminAPIClient.GetNewClientTokenAsync(sharpHoundClient["id"].ToString());
-                sharpHoundClient["token"] = newTokenForExistingClient;
+            bool success = LoadEnvVariablesFromFile(envFilePath);
+            if (!success) {
+                await Console.Out.WriteLineAsync("[!] Could not load the specified environment variables file");
+                return null;
             }
-            else
-            {
-                JObject createdClient = await adminAPIClient.CreateClientAsync(SHARPHOUND_CLIENT_NAME, "sharphound");
-                if (createdClient != null)
+            else 
+            { 
+                LoadSpecificEnvVariables(out string domain, out int port, out string scheme, out string sharpHoundUserAgent,
+                    out string sharpHoundClientName, out string userTokenId, out string userTokenKey, out string clientTokenId, out string clientTokenKey);
+
+                if (string.IsNullOrEmpty(userTokenId) && string.IsNullOrEmpty(userTokenKey))
                 {
-                    sharpHoundClient = createdClient["data"] as JObject;
+                    await Console.Out.WriteLineAsync("[!] Please specify a USER_TOKEN_ID and USER_TOKEN_KEY in the environment variables file");
+                    return null;
                 }
+
+                APIClient userAPIClient = new APIClient(scheme, domain, port, userTokenId, userTokenKey, proxy);
+
+                JToken userClientGetSelfResponse = await userAPIClient.GetSelfAsync();
+                if (userClientGetSelfResponse != null)
+                { 
+                    userAPIClient.Id = userClientGetSelfResponse["id"].ToString();
+                    await Console.Out.WriteLineAsync("[*] Received response for user token ");
+                }
+                else
+                {
+                    await Console.Out.WriteLineAsync("[!] Could not validate user token id and key");
+                    return null;
+                }
+
+                /* Removed in favor of file upload to allow users with Upload-Only permission to use FETCH
+                if (string.IsNullOrEmpty(clientTokenId) && string.IsNullOrEmpty(clientTokenKey))
+                {
+
+                    // Check if a SharpHound ingest client exists and get a token for it, otherwise create one
+                    JToken sharpHoundClientResponse = await userAPIClient.CheckIfSharpHoundClientExists(sharpHoundClientName);
+
+                    if (sharpHoundClientResponse != null)
+                    {
+                        JObject newTokenForExistingClientResponse = await userAPIClient.GetNewClientTokenAsync(sharpHoundClientResponse["id"].ToString());
+                        if (newTokenForExistingClientResponse != null)
+                        {
+                            clientTokenId = newTokenForExistingClientResponse["data"]["id"].ToString();
+                            clientTokenKey = newTokenForExistingClientResponse["data"]["key"].ToString();
+                        }
+                        else
+                        {
+                            await Console.Out.WriteLineAsync("[!] Could not create a new token for the specified client");
+                            return (userAPIClient, null);
+                        }
+                    }
+                    else
+                    {
+                        JObject createClientResponse = await userAPIClient.CreateClientAsync(sharpHoundClientName, "sharphound");
+                        if (createClientResponse != null)
+                        {
+                            clientTokenId = createClientResponse["data"]["token"]["id"].ToString();
+                            clientTokenKey = createClientResponse["data"]["token"]["key"].ToString();
+                        }
+                        else
+                        {
+                            await Console.Out.WriteLineAsync("[!] Could not create a new SharpHound client");
+                            return (userAPIClient, null);
+                        }
+                    }
+                }                
+
+                APIClient sharpHoundAPIClient = new APIClient(scheme, domain, port, clientTokenId, clientTokenKey, proxy);
+
+                JToken sharpHoundClientGetSelfResponse = await sharpHoundAPIClient.GetSelfAsync();
+                if (sharpHoundClientGetSelfResponse != null) { 
+                    sharpHoundAPIClient.Id = sharpHoundClientGetSelfResponse["id"].ToString();
+                    await Console.Out.WriteLineAsync("[*] Received response for SharpHound client token");
+                }
+                else
+                {
+                    await Console.Out.WriteLineAsync("[!] Could not validate SharpHound client token id and key");
+                    return (userAPIClient, null);
+                }
+                */
+                return userAPIClient;
             }
-
-            if (sharpHoundClient == null) return (null, null, null);
-
-            // Create API client for SharpHound client
-            Credentials sharpHoundClientCreds = new Credentials(sharpHoundClient["token"]["data"]["id"].ToString(), sharpHoundClient["token"]["data"]["key"].ToString());
-            APIClient sharpHoundAPIClientSigned = InitializeAPIClient(sharpHoundClientCreds.TokenId, sharpHoundClientCreds.TokenKey, SCHEME, DOMAIN, PORT);
-            return (adminAPIClient, sharpHoundClient, sharpHoundAPIClientSigned);
-        }
-    }
-
-    public class Credentials
-    {
-        public string TokenId { get; }
-        public string TokenKey { get; }
-
-        public Credentials(string tokenId, string tokenKey)
-        {
-            TokenId = tokenId;
-            TokenKey = tokenKey;
         }
     }
 
