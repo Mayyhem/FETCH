@@ -20,6 +20,7 @@ using System.DirectoryServices.ActiveDirectory;
 using System.DirectoryServices.Protocols;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Security.Principal;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -525,9 +526,16 @@ namespace Sharphound {
                     //     cancellationTokenSource.Cancel();
                     // };
 
+
                     // FETCH retrieval, aggregation, and upload to ingest API
                     if (!string.IsNullOrEmpty(options.Fetch))
                     {
+                        APIClient userAPIClient = await APIClient.GetAPIClient(options.EnvFile, options.Proxy);
+                        if (userAPIClient == null)
+                        {
+                            await Console.Out.WriteLineAsync("[!] Could not use the specified credentials");
+                            return;
+                        }
 
                         // Work in progress
                         if (options.Fetch == "adminservice")
@@ -561,7 +569,7 @@ namespace Sharphound {
                                     foreach (JObject chunk in fetchData)
                                     {
                                         // Send computers files to the ingest API in batches of 100 per job
-                                        await APIClient.SendItAsync(fetchData);
+                                        await userAPIClient.SendItFileUploadAsync(fetchData);
                                     }
                                 }
                                 else
@@ -588,28 +596,18 @@ namespace Sharphound {
                         {
                             if (!string.IsNullOrEmpty(options.SiteDatabase) && !string.IsNullOrEmpty(options.SiteCode))
                             {
-                                (APIClient adminAPIClient, JToken sharpHoundClient, APIClient signedSharpHoundAPIClient) =
-                                    await APIClient.GetAPIClients();
-
-                                if (signedSharpHoundAPIClient == null)
-                                {
-                                    await Console.Out.WriteLineAsync("[!] Could not find API clients");
-                                    return;
-                                }
-
                                 // Query the site database for sessions, user rights, and local groups
                                 // Send computers files to the ingest API in batches
-                                await Fetch.QueryDatabaseAndSendChunks(adminAPIClient, sharpHoundClient, signedSharpHoundAPIClient,
-                                    "LocalGroups", options, logger);
+                                bool success = await Fetch.QueryDatabaseAndSendChunksFileUpload(userAPIClient, "LocalGroups", options, logger);
                                 // Sleep to avoid job ending/starting race conditions
+                                if (!success) return;
                                 Thread.Sleep(5000);
-                                await Fetch.QueryDatabaseAndSendChunks(adminAPIClient, sharpHoundClient, signedSharpHoundAPIClient,
-                                    "Sessions", options, logger);
+                                success = await Fetch.QueryDatabaseAndSendChunksFileUpload(userAPIClient, "Sessions", options, logger);
+                                if (!success) return;
                                 Thread.Sleep(5000);
-                                await Fetch.QueryDatabaseAndSendChunks(adminAPIClient, sharpHoundClient, signedSharpHoundAPIClient,
-                                    "UserRights", options, logger);
+                                success = await Fetch.QueryDatabaseAndSendChunksFileUpload(userAPIClient, "UserRights", options, logger);
+                                if (!success) return;
                             }
-
                             else
                             {
                                 if (string.IsNullOrEmpty(options.SiteDatabase)) Console.WriteLine("[!] SiteDatabase was not specified");
@@ -630,7 +628,7 @@ namespace Sharphound {
                                 if (fileContentQueryResponse != null)
                                 {
                                     List<JObject> fileContentQueryResults = Fetch.PrepareFileContentQueryResults(fileContentQueryResponse);
-                                    await APIClient.SendItAsync(fileContentQueryResults);
+                                    await userAPIClient.SendItFileUploadAsync(fileContentQueryResults);
                                 }
                             }
                             else if (!string.IsNullOrEmpty(options.SmsProvider) || !string.IsNullOrEmpty(options.SiteCode) || !string.IsNullOrEmpty(options.CollectionId))
@@ -651,8 +649,8 @@ namespace Sharphound {
                             if (!string.IsNullOrEmpty(options.FetchResultsDir))
                             {
                                 bool isValidPath = Regex.IsMatch(options.FetchResultsDir, uncPattern) ||
-                                                   Regex.IsMatch(options.FetchResultsDir, localDirPattern) ||
-                                                   Directory.Exists(options.FetchResultsDir);
+                                                    Regex.IsMatch(options.FetchResultsDir, localDirPattern) ||
+                                                    Directory.Exists(options.FetchResultsDir);
 
                                 if (isValidPath)
                                 {
@@ -662,7 +660,7 @@ namespace Sharphound {
                                         if (fetchResults != null && fetchResults.Any())
                                         {
                                             logger.LogInformation($"Found {fetchResults.Count} FETCH results in {options.FetchResultsDir}");
-                                            await APIClient.SendItAsync(fetchResults);
+                                            await userAPIClient.SendItFileUploadAsync(fetchResults);
                                             logger.LogInformation($"Successfully processed and sent {fetchResults.Count} FETCH results from {options.FetchResultsDir}");
                                         }
                                         else
@@ -682,7 +680,7 @@ namespace Sharphound {
                             }
                         }
                     }
-
+                    
                     else
                     {
                         // LDAP collection

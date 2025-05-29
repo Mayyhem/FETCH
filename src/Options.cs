@@ -147,6 +147,12 @@ namespace Sharphound
         [Option(HelpText = "Use FETCH to aggregate and upload previously collected data. Options: 'adminservice', 'wmi', 'mssql', 'cmpivot', 'dir'")]
         public string Fetch { get; set; }
 
+        [Option('x', "Proxy", HelpText = "Specify a web proxy to use for requests to the BloodHound API (e.g., \"http://127.0.0.1:8080)\"")]
+        public string Proxy { get; set; }
+
+        [Option(HelpText = "Specify the path to a file containing FETCH environment variables")]
+        public string EnvFile { get; set; }
+
         [Option(HelpText = "Number of days behind to collect FETCH results", Default = 7)]
         public int LookbackDays { get; set; }
 

@@ -362,24 +362,40 @@ namespace Sharphound
             return null;
         }
 
-        public static async Task QueryDatabaseAndSendChunks(APIClient adminAPIClient, JToken sharpHoundClient,
-            APIClient signedSharpHoundAPIClient, string tableName, Options options, ILogger logger)
+        public static async Task<bool> QueryDatabaseAndSendChunksFileUpload(APIClient userAPIClient, string tableName, Options options, ILogger logger)
         {
             try
             {
-                // Create and start job for SharpHound client
-                await adminAPIClient.CreateJobAsync(adminAPIClient, sharpHoundClient);
-                JArray jobs = await signedSharpHoundAPIClient.GetJobsAsync();
+                // Create and start job for user
+                var createJobResult = await userAPIClient.CreateFileUploadJobAsync();
+                if (createJobResult.StatusCode != HttpStatusCode.Created)
+                {
+                    await Console.Out.WriteLineAsync("[!] Could not create a file upload job for user");
+                    return false;
+                }
+                var responseContent = await createJobResult.Content.ReadAsStringAsync();
+
+                int jobId = 0;
+
+                try
+                {
+                    jobId = (int)JObject.Parse(responseContent)["data"]["id"];
+                }
+                catch
+                {
+                    await Console.Out.WriteLineAsync("[!] Could not get job ID");
+                    return false;
+                }
+
+                JArray jobs = await userAPIClient.GetFileUploadJobsAsync();
                 if (jobs.Count == 0)
                 {
                     logger.LogError("No jobs found");
-                    return;
+                    return false;
                 }
-                JObject nextJob = jobs[0] as JObject;
-                await signedSharpHoundAPIClient.StartJobAsync((int)nextJob["id"]);
 
                 // Number of computers to fetch from the database and process in each chunk
-                const int computersPerChunk = 300; 
+                const int computersPerChunk = 300;
                 int totalComputersProcessed = 0;
 
                 logger.LogInformation($"Querying table: {tableName}");
@@ -387,7 +403,7 @@ namespace Sharphound
                 bool hasMoreData = true;
                 while (hasMoreData)
                 {
-                    var computerData = await FetchNextComputerChunk(options.SiteDatabase, options.SiteCode, options.TablePrefix, 
+                    var computerData = await FetchNextComputerChunk(options.SiteDatabase, options.SiteCode, options.TablePrefix,
                         tableName, options.LookbackDays, computersPerChunk, totalComputersProcessed);
 
                     if (computerData.Count == 0)
@@ -396,17 +412,19 @@ namespace Sharphound
                         continue;
                     }
 
-                    await SendFormattedResults(signedSharpHoundAPIClient, computerData);
+                    await SendFormattedResultsFileUpload(userAPIClient, jobId, computerData);
                     totalComputersProcessed += computerData.Count;
                     logger.LogInformation($"Processed {totalComputersProcessed} computers for {tableName}");
                 }
 
-                await signedSharpHoundAPIClient.EndJobAsync();
+                await userAPIClient.EndFileUploadJobAsync(jobId);
                 logger.LogInformation($"Total computers processed for {tableName}: {totalComputersProcessed}");
+                return true;
             }
             catch (Exception ex)
             {
                 logger.LogError($"Error processing or sending data: {ex.Message}");
+                return false;
             }
         }
 
@@ -503,7 +521,7 @@ namespace Sharphound
             }
         }
 
-        private static async Task SendFormattedResults(APIClient signedSharpHoundAPIClient, Dictionary<string, List<FetchQueryResult>> computerResults)
+        private static async Task SendFormattedResultsFileUpload(APIClient apiClient, int jobId, Dictionary<string, List<FetchQueryResult>> computerResults)
         {
             var formattedResults = new JObject
             {
@@ -517,7 +535,7 @@ namespace Sharphound
                 ["data"] = new JArray(computerResults.Select(kvp => FormatComputerData(kvp.Key, kvp.Value)))
             };
 
-            await signedSharpHoundAPIClient.PostIngestAsync(Encoding.UTF8.GetBytes(formattedResults.ToString(Formatting.None)));
+            await apiClient.UploadFileAsync(jobId, Encoding.UTF8.GetBytes(formattedResults.ToString(Formatting.None)));
         }
 
         public static List<FetchQueryResult> ProcessCMPivotResults(JObject cmPivotResult)

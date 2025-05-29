@@ -5,7 +5,7 @@ FETCH: Flexible Enumeration Tool for Centrally-managed Hosts.
 .DESCRIPTION
 Author: SpecterOps
 Purpose:
-  - Collect local sessions, user rights assignments, and group members
+  - Collect local sessions, user rights assignments, group members, and registry data
   - Stage output for SharpHound collection via centralized management tools
 Requirements:
   - Local Administrators group privileges
@@ -50,7 +50,7 @@ Enable verbose logging of script execution events (default: disabled).
 Store results in the local WMI repository (default: disabled)
 
 .PARAMETER WmiClassPrefix
-Store results in local WMI classes named with the specified prefix (e.g., a value of 'BloodHound_' creates the 'BloodHound_Sessions', 'BloodHound_LocalGroups', and 'BloodHound_UserRights' classes) (default: 'BloodHound_').
+Store results in local WMI classes named with the specified prefix (e.g., a value of 'BloodHound_' creates the 'BloodHound_Sessions', 'BloodHound_LocalGroups', 'BloodHound_UserRights', and 'BloodHound_NTLMRegistry' classes) (default: 'BloodHound_').
 
 .PARAMETER WmiNamespace
 Store results in local WMI classes in the specified namespace (default: 'root\cimv2').
@@ -257,18 +257,30 @@ function Add-WmiClassInstance {
     $instance.InstanceID = $maxID + 1
 
     # Set CollectionDatetime
-    $instance.CollectionDatetime = [Management.ManagementDateTimeConverter]::ToDmtfDateTime($(Get-Date))
+    $instance.CollectionDatetime = [System.Management.ManagementDateTimeConverter]::ToDmtfDateTime((Get-Date))
 
-    # Set properties dynamically
-    foreach ($key in $Properties.Keys) {
-        if ($instance.PSObject.Properties.Name -contains $key) {
-            $instance.$key = if ($Properties[$key] -match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$') {
-                ([DateTime]::ParseExact($Properties[$key], "yyyy-MM-dd HH:mm 'UTC'", [System.Globalization.CultureInfo]::InvariantCulture)).ToString("yyyyMMddHHmmss.ffffff+000")
+
+    # Set properties
+    switch ($CollectionType) {
+        "Sessions" {
+            $instance.UserSID = $Properties.UserSID
+            $instance.ComputerSID = $Properties.ComputerSID
+            if ($Properties.LastSeen -match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$') {
+                $instance.LastSeen = ([DateTime]::ParseExact($Properties.LastSeen, "yyyy-MM-dd HH:mm 'UTC'", [System.Globalization.CultureInfo]::InvariantCulture)).ToString("yyyyMMddHHmmss.ffffff+000")
             } else {
-                $Properties[$key]
+                $instance.LastSeen = $Properties.LastSeen
             }
-        } else {
-            Write-Log "WARNING" "Property '$key' is not defined in the WMI class '$wmiClassName'. Skipping."
+        }
+        "LocalGroups" {
+            $instance.GroupName = $Properties.GroupName
+            $instance.GroupSID = $Properties.GroupSID
+            $instance.MemberType = $Properties.MemberType
+            $instance.MemberSID = $Properties.MemberSID
+        }
+        "UserRights" {
+            $instance.Privilege = $Properties.Privilege
+            $instance.ObjectIdentifier = $Properties.ObjectIdentifier
+            $instance.ObjectType = $Properties.ObjectType
         }
     }
 
@@ -294,8 +306,14 @@ function Remove-OldInstances {
 
     # Convert string datetime to comparable DateTime object
     $instancesToDelete = $instances | Where-Object { 
-        $collectionTime = [System.Management.ManagementDateTimeConverter]::ToDateTime($_.CollectionDatetime)
-        $collectionTime -lt $cutoffDate 
+        try {
+            $collectionTime = [System.Management.ManagementDateTimeConverter]::ToDateTime($_.CollectionDatetime)
+            $collectionTime -lt $cutoffDate 
+        } catch {
+            # If datetime conversion fails, skip this instance
+            Write-Log "WARNING" "Could not parse CollectionDatetime for instance: $($_.CollectionDatetime)"
+            $false
+        }
     }
 
     if ($instancesToDelete.Count -gt 0) {
@@ -419,7 +437,11 @@ try {
     }
 
     # Collect local system FQDN
-    $thisComputerFQDN = [System.Net.Dns]::GetHostEntry([string]"localhost").HostName
+    $thisComputerFQDN = $env:COMPUTERNAME
+    $domain = (Get-WmiObject Win32_ComputerSystem).Domain
+    if ($domain) {
+        $thisComputerFQDN = "$env:COMPUTERNAME.$domain"
+    }
     Write-DebugVar thisComputerFQDN
 
     # Get the local machine SID prefixed to local accounts
@@ -487,7 +509,8 @@ try {
         Write-Log "INFO" "Writing results to: 
                                         $WmiNamespace\$WmiClassPrefix`Sessions
                                         $WmiNamespace\$WmiClassPrefix`UserRights
-                                        $WmiNamespace\$WmiClassPrefix`LocalGroups"
+                                        $WmiNamespace\$WmiClassPrefix`LocalGroups
+                                        $WmiNamespace\$WmiClassPrefix`NTLMRegistry"
     }
 
 
@@ -749,6 +772,7 @@ try {
     Write-DebugVar userRights
     Write-Log "INFO" "Found user rights for $($userRights.Count) privileges"
 
+
     <#
     -------------------------------------------
     Collect local group memberships
@@ -956,6 +980,229 @@ try {
 
     <#
     -------------------------------------------
+    Collect NTLM Registry Data
+    -------------------------------------------
+    #>
+
+    Write-Log "INFO" "Collecting NTLM registry data"
+
+    # If using WMI option, create storage class if it doesn't exist
+    if ($Wmi) {
+        $keyProp = @{ "InstanceID" = "uint32" }
+        $props = @{ 
+            # Using sint32 to allow -1 as null indicator for values that were not defined or not collected
+            "CollectionDatetime" = "datetime"
+            "ClientAllowedNTLMServers" = "string"
+            "EnableSecuritySignature" = "sint32"  
+            "LmCompatibilityLevel" = "sint32"
+            "NtlmMinClientSec" = "sint32"
+            "NtlmMinServerSec" = "sint32"
+            "RequireSecuritySignature" = "sint32"
+            "RestrictReceivingNtlmTraffic" = "sint32"
+            "RestrictSendingNtlmTraffic" = "sint32"
+            "UseMachineId" = "sint32"
+        }
+        Add-WmiClass -WmiNamespace $WmiNamespace -WmiClassPrefix $WmiClassPrefix -CollectionType "NTLMRegistry" -KeyProperty $keyProp -Properties $props
+        
+        # Delete ALL existing instances (we want only current values)
+        $existingNTLMInstances = Get-WmiObject -Namespace $WmiNamespace -Class "$WmiClassPrefix`NTLMRegistry" -ErrorAction SilentlyContinue
+        if ($existingNTLMInstances) {
+            Write-Log "VERBOSE" "Removing $($existingNTLMInstances.Count) existing NTLM registry instances"
+            foreach ($instance in $existingNTLMInstances) {
+                try {
+                    $instance.Delete()
+                } catch {
+                    Write-Log "WARNING" "Failed to delete existing NTLM instance: $_"
+                }
+            }
+        }
+    }
+
+    # Initialize the result structure
+    $ntlmRegistryData = @{
+        "Collected" = $true
+        "FailureReason" = $null
+        "Result" = @{
+            "ClientAllowedNTLMServers" = $null
+            "EnableSecuritySignature" = $null
+            "LmCompatibilityLevel" = $null
+            "NtlmMinClientSec" = $null
+            "NtlmMinServerSec" = $null
+            "RequireSecuritySignature" = $null
+            "RestrictReceivingNtlmTraffic" = $null
+            "RestrictSendingNtlmTraffic" = $null
+            "UseMachineId" = $null
+        }
+    }
+
+    try {
+        # Collect MSV1_0 registry values
+        $msv10Path = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0"
+        if (Test-Path $msv10Path) {
+            $msv10Values = @{
+                "ClientAllowedNTLMServers" = "ClientAllowedNTLMServers"
+                "NtlmMinClientSec" = "NtlmMinClientSec"
+                "NtlmMinServerSec" = "NtlmMinServerSec"
+                "RestrictReceivingNTLMTraffic" = "RestrictReceivingNtlmTraffic"
+                "RestrictSendingNTLMTraffic" = "RestrictSendingNtlmTraffic"
+            }
+            
+            foreach ($key in $msv10Values.Keys) {
+                try {
+                    $value = Get-ItemProperty -Path $msv10Path -Name $key -ErrorAction SilentlyContinue
+                    if ($value -and $null -ne $value.$key) {
+                        $ntlmRegistryData.Result[$msv10Values[$key]] = $value.$key
+                        Write-Log "VERBOSE" "Found $key = $($value.$key)"
+                    }
+                    else {
+                        Write-Log "VERBOSE" "$key was not defined"
+                    }
+                } catch {
+                    Write-Log "ERROR" "Error querying $key"
+                }
+            }
+        }
+
+        # Collect LSA registry values
+        $lsaPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
+        if (Test-Path $lsaPath) {
+            $lsaValues = @{
+                "LMCompatibilityLevel" = "LmCompatibilityLevel"
+                "UseMachineId" = "UseMachineId"
+            }
+            
+            foreach ($key in $lsaValues.Keys) {
+                try {
+                    $value = Get-ItemProperty -Path $lsaPath -Name $key -ErrorAction SilentlyContinue
+                    if ($value -and $null -ne $value.$key) {
+                        $ntlmRegistryData.Result[$lsaValues[$key]] = $value.$key
+                        Write-Log "VERBOSE" "Found $key = $($value.$key)"
+                    }
+                    else {
+                        Write-Log "VERBOSE" "$key was not defined"
+                    }
+                } catch {
+                    Write-Log "ERROR" "Error querying $key"
+                }
+            }
+        }
+
+        # Collect LanmanServer registry values
+        $lanmanPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+        if (Test-Path $lanmanPath) {
+            $lanmanValues = @{
+                "EnableSecuritySignature" = "EnableSecuritySignature"
+                "RequireSecuritySignature" = "RequireSecuritySignature"
+            }
+            
+            foreach ($key in $lanmanValues.Keys) {
+                try {
+                    $value = Get-ItemProperty -Path $lanmanPath -Name $key -ErrorAction SilentlyContinue
+                    if ($value -and $null -ne $value.$key) {
+                        $ntlmRegistryData.Result[$lanmanValues[$key]] = $value.$key
+                        Write-Log "VERBOSE" "Found $key = $($value.$key)"
+                    }
+                    else {
+                        Write-Log "VERBOSE" "$key was not defined"
+                    }
+                } catch {
+                    Write-Log "ERROR" "Error querying $key"
+                }
+            }
+        }
+
+        Write-Log "INFO" "Collected NTLM registry data successfully"
+
+        # Store in WMI if enabled
+        if ($Wmi) {
+            try {
+                # Manually create instance since Add-WmiClassInstance expects specific CollectionType values
+                $wmiClassName = "$WmiClassPrefix`NTLMRegistry"
+                $instance = ([WMICLASS]"\\.\${WmiNamespace}:${wmiClassName}").CreateInstance()
+                
+                # Set instance ID (should be 1 since we deleted all existing)
+                $instance.InstanceID = 1
+                
+                # Set collection datetime
+                $instance.CollectionDatetime = [Management.ManagementDateTimeConverter]::ToDmtfDateTime($(Get-Date))
+                
+                # Set all properties, using -1 to indicate null/not collected for numeric values
+                # For string values, use empty string to indicate null
+                $instance.ClientAllowedNTLMServers = if ($null -ne $ntlmRegistryData.Result.ClientAllowedNTLMServers) { 
+                    if ($ntlmRegistryData.Result.ClientAllowedNTLMServers -is [array]) {
+                        [string]::Join(";", $ntlmRegistryData.Result.ClientAllowedNTLMServers)
+                    } else {
+                        [string]$ntlmRegistryData.Result.ClientAllowedNTLMServers
+                    }
+                } else { 
+                    "" 
+                }
+                
+                # Use -1 to indicate null/not collected for numeric values
+                $instance.EnableSecuritySignature = if ($null -ne $ntlmRegistryData.Result.EnableSecuritySignature) { 
+                    [int32]$ntlmRegistryData.Result.EnableSecuritySignature 
+                } else { 
+                    -1 
+                }
+                
+                $instance.LmCompatibilityLevel = if ($null -ne $ntlmRegistryData.Result.LmCompatibilityLevel) { 
+                    [int32]$ntlmRegistryData.Result.LmCompatibilityLevel 
+                } else { 
+                    -1 
+                }
+                
+                $instance.NtlmMinClientSec = if ($null -ne $ntlmRegistryData.Result.NtlmMinClientSec) { 
+                    [int32]$ntlmRegistryData.Result.NtlmMinClientSec 
+                } else { 
+                    -1 
+                }
+                
+                $instance.NtlmMinServerSec = if ($null -ne $ntlmRegistryData.Result.NtlmMinServerSec) { 
+                    [int32]$ntlmRegistryData.Result.NtlmMinServerSec 
+                } else { 
+                    -1 
+                }
+                
+                $instance.RequireSecuritySignature = if ($null -ne $ntlmRegistryData.Result.RequireSecuritySignature) { 
+                    [int32]$ntlmRegistryData.Result.RequireSecuritySignature 
+                } else { 
+                    -1 
+                }
+                
+                $instance.RestrictReceivingNtlmTraffic = if ($null -ne $ntlmRegistryData.Result.RestrictReceivingNtlmTraffic) { 
+                    [int32]$ntlmRegistryData.Result.RestrictReceivingNtlmTraffic 
+                } else { 
+                    -1 
+                }
+                
+                $instance.RestrictSendingNtlmTraffic = if ($null -ne $ntlmRegistryData.Result.RestrictSendingNtlmTraffic) { 
+                    [int32]$ntlmRegistryData.Result.RestrictSendingNtlmTraffic 
+                } else { 
+                    -1 
+                }
+                
+                $instance.UseMachineId = if ($null -ne $ntlmRegistryData.Result.UseMachineId) { 
+                    [int32]$ntlmRegistryData.Result.UseMachineId 
+                } else { 
+                    -1 
+                }
+                
+                $instance.Put() | Out-Null
+                Write-Log "VERBOSE" "Successfully saved NTLM registry data to ${WmiNamespace}\${wmiClassName}"
+            } catch {
+                Write-Log "WARNING" "Failed to save NTLM registry data to WMI: $_"
+            }
+        }
+    } catch {
+        Write-Log "WARNING" "Failed to collect NTLM registry data: $_"
+        $ntlmRegistryData.Collected = $false
+        $ntlmRegistryData.FailureReason = $_.Exception.Message
+    }
+
+    Write-DebugVar ntlmRegistryData
+
+    <#
+    -------------------------------------------
     Format output and stage for SharpHound collection
     -------------------------------------------
     #>
@@ -969,6 +1216,7 @@ try {
             Sessions = $sessions | Sort-Object -Unique
             UserRights = $userRights
             LocalGroups = $groups
+            NTLMRegistryData = $ntlmRegistryData
         }
     )
     Write-DebugVar data
