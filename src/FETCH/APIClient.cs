@@ -1,11 +1,8 @@
-﻿using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Converters;
+﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -266,56 +263,6 @@ namespace Sharphound
                     return null;
                 }
 
-                /* Removed in favor of file upload to allow users with Upload-Only permission to use FETCH
-                if (string.IsNullOrEmpty(clientTokenId) && string.IsNullOrEmpty(clientTokenKey))
-                {
-
-                    // Check if a SharpHound ingest client exists and get a token for it, otherwise create one
-                    JToken sharpHoundClientResponse = await userAPIClient.CheckIfSharpHoundClientExists(sharpHoundClientName);
-
-                    if (sharpHoundClientResponse != null)
-                    {
-                        JObject newTokenForExistingClientResponse = await userAPIClient.GetNewClientTokenAsync(sharpHoundClientResponse["id"].ToString());
-                        if (newTokenForExistingClientResponse != null)
-                        {
-                            clientTokenId = newTokenForExistingClientResponse["data"]["id"].ToString();
-                            clientTokenKey = newTokenForExistingClientResponse["data"]["key"].ToString();
-                        }
-                        else
-                        {
-                            await Console.Out.WriteLineAsync("[!] Could not create a new token for the specified client");
-                            return (userAPIClient, null);
-                        }
-                    }
-                    else
-                    {
-                        JObject createClientResponse = await userAPIClient.CreateClientAsync(sharpHoundClientName, "sharphound");
-                        if (createClientResponse != null)
-                        {
-                            clientTokenId = createClientResponse["data"]["token"]["id"].ToString();
-                            clientTokenKey = createClientResponse["data"]["token"]["key"].ToString();
-                        }
-                        else
-                        {
-                            await Console.Out.WriteLineAsync("[!] Could not create a new SharpHound client");
-                            return (userAPIClient, null);
-                        }
-                    }
-                }                
-
-                APIClient sharpHoundAPIClient = new APIClient(scheme, domain, port, clientTokenId, clientTokenKey, proxy);
-
-                JToken sharpHoundClientGetSelfResponse = await sharpHoundAPIClient.GetSelfAsync();
-                if (sharpHoundClientGetSelfResponse != null) { 
-                    sharpHoundAPIClient.Id = sharpHoundClientGetSelfResponse["id"].ToString();
-                    await Console.Out.WriteLineAsync("[*] Received response for SharpHound client token");
-                }
-                else
-                {
-                    await Console.Out.WriteLineAsync("[!] Could not validate SharpHound client token id and key");
-                    return (userAPIClient, null);
-                }
-                */
                 return userAPIClient;
             }
         }
