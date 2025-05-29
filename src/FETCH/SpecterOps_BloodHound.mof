@@ -66,3 +66,33 @@ class BloodHound_LocalGroups : SMS_Class_Template
     [ SMS_Report (TRUE) ]
     String	MemberSID;
 };
+
+[ SMS_Report (TRUE),
+  SMS_Group_Name ("BloodHound NTLM Registry"),
+  SMS_Class_ID ("SpecterOps|BloodHound NTLM Registry|1.0"),
+  Namespace ("root\\\\cimv2") ]
+class BloodHound_NTLMRegistry : SMS_Class_Template
+{
+    [ SMS_Report (TRUE), key ]
+    UInt32	InstanceID;
+    [ SMS_Report (TRUE) ]
+    DateTime	CollectionDatetime;
+    [ SMS_Report (TRUE) ]
+    String	ClientAllowedNTLMServers;
+    [ SMS_Report (TRUE) ]
+    SInt32	EnableSecuritySignature;
+    [ SMS_Report (TRUE) ]
+    SInt32	LmCompatibilityLevel;
+    [ SMS_Report (TRUE) ]
+    SInt64	NtlmMinClientSec;
+    [ SMS_Report (TRUE) ]
+    SInt64	NtlmMinServerSec;
+    [ SMS_Report (TRUE) ]
+    SInt32	RequireSecuritySignature;
+    [ SMS_Report (TRUE) ]
+    SInt32	RestrictReceivingNtlmTraffic;
+    [ SMS_Report (TRUE) ]
+    SInt32	RestrictSendingNtlmTraffic;
+    [ SMS_Report (TRUE) ]
+    SInt32	UseMachineId;
+};
