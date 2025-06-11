@@ -607,6 +607,9 @@ namespace Sharphound {
                                 Thread.Sleep(5000);
                                 success = await Fetch.QueryDatabaseAndSendChunksFileUpload(userAPIClient, "UserRights", options, logger);
                                 if (!success) return;
+                                Thread.Sleep(5000);
+                                success = await Fetch.QueryDatabaseAndSendChunksFileUpload(userAPIClient, "NTLM_Registry", options, logger);
+                                if (!success) return;
                             }
                             else
                             {

@@ -516,6 +516,8 @@ namespace Sharphound
                     return new List<string> { "Privilege00", "ObjectIdentifier00", "ObjectType00" };
                 case "LocalGroups":
                     return new List<string> { "GroupName00", "GroupSID00", "MemberType00", "MemberSID00" };
+                case "NTLM_Registry":
+                    return new List<string> { "ClientAllowedNTLMServers00", "EnableSecuritySignature00", "LmCompatibilityLevel00", "NtlmMinClientSec00", "NtlmMinServerSec00", "RequireSecuritySignature00", "RestrictReceivingNtlmTraffic00", "RestrictSendingNtlmTraffic00", "UseMachineId00" };
                 default:
                     throw new ArgumentException("Invalid collection type");
             }
@@ -642,6 +644,11 @@ namespace Sharphound
             // Key: GroupSID, Value: JObject representing the group
             var localGroups = new Dictionary<string, JObject>();
 
+            // Dictionary to store NTLM Registry settings
+            // We'll store the most recent registry values for this computer
+            var ntlmRegistry = new Dictionary<string, string>();
+            DateTime? mostRecentNtlmDate = null;
+
             foreach (var result in computerResults)
             {
                 if (result.CollectionData.ContainsKey("UserSID00"))
@@ -717,6 +724,27 @@ namespace Sharphound
                         });
                     }
                 }
+
+                else if (result.CollectionData.ContainsKey("ClientAllowedNTLMServers00"))
+                {
+                    // Process NTLM_Registry data
+                    // Only keep the most recent NTLM registry data for this computer
+                    if (!mostRecentNtlmDate.HasValue || result.CollectionDatetime > mostRecentNtlmDate.Value)
+                    {
+                        mostRecentNtlmDate = result.CollectionDatetime;
+
+                        // Update all NTLM registry values
+                        ntlmRegistry["ClientAllowedNTLMServers"] = result.CollectionData["ClientAllowedNTLMServers00"];
+                        ntlmRegistry["EnableSecuritySignature"] = result.CollectionData["EnableSecuritySignature00"];
+                        ntlmRegistry["LmCompatibilityLevel"] = result.CollectionData["LmCompatibilityLevel00"];
+                        ntlmRegistry["NtlmMinClientSec"] = result.CollectionData["NtlmMinClientSec00"];
+                        ntlmRegistry["NtlmMinServerSec"] = result.CollectionData["NtlmMinServerSec00"];
+                        ntlmRegistry["RequireSecuritySignature"] = result.CollectionData["RequireSecuritySignature00"];
+                        ntlmRegistry["RestrictReceivingNtlmTraffic"] = result.CollectionData["RestrictReceivingNtlmTraffic00"];
+                        ntlmRegistry["RestrictSendingNtlmTraffic"] = result.CollectionData["RestrictSendingNtlmTraffic00"];
+                        ntlmRegistry["UseMachineId"] = result.CollectionData["UseMachineId00"];
+                    }
+                }
             }
 
             // Add Sessions to the computer data if any exist
@@ -758,6 +786,28 @@ namespace Sharphound
                 computerData["LocalGroups"] = new JArray(localGroups.Values);
             }
 
+            // Add NTLM Registry settings to the computer data if any exist
+            if (ntlmRegistry.Count > 0)
+            {
+                computerData["NTLMRegistryData"] = new JObject
+                {
+                    ["Collected"] = true,
+                    ["FailureReason"] = null,
+                    ["Result"] = new JObject
+                    {
+                        ["ClientAllowedNTLMServers"] = ParseNTLMServers(ntlmRegistry["ClientAllowedNTLMServers"]),
+                        ["EnableSecuritySignature"] = ParseUintOrNull(ntlmRegistry["EnableSecuritySignature"]),
+                        ["LmCompatibilityLevel"] = ParseUintOrNull(ntlmRegistry["LmCompatibilityLevel"]),
+                        ["NtlmMinClientSec"] = ParseUintOrNull(ntlmRegistry["NtlmMinClientSec"]),
+                        ["NtlmMinServerSec"] = ParseUintOrNull(ntlmRegistry["NtlmMinServerSec"]),
+                        ["RequireSecuritySignature"] = ParseUintOrNull(ntlmRegistry["RequireSecuritySignature"]),
+                        ["RestrictReceivingNtlmTraffic"] = ParseUintOrNull(ntlmRegistry["RestrictReceivingNtlmTraffic"]),
+                        ["RestrictSendingNtlmTraffic"] = ParseUintOrNull(ntlmRegistry["RestrictSendingNtlmTraffic"]),
+                        ["UseMachineId"] = ParseUintOrNull(ntlmRegistry["UseMachineId"])
+                    }
+                };
+            }
+
             return computerData;
         }
 
@@ -794,6 +844,42 @@ namespace Sharphound
             }
 
             return chunks;
+        }
+
+        private static uint? ParseUintOrNull(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return null;
+
+            if (uint.TryParse(value, out uint result))
+            {
+                return result;
+            }
+
+            // If it's a negative number (like -1), return null
+            if (int.TryParse(value, out int signedResult) && signedResult < 0)
+            {
+                return null;
+            }
+
+            return null;
+        }
+
+        private static JArray ParseNTLMServers(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                // Return empty array for null/empty values
+                return new JArray();
+            }
+
+            // Parse the semicolon-separated list of servers (common format in registry)
+            var servers = value.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
+                              .Select(s => s.Trim())
+                              .Where(s => !string.IsNullOrEmpty(s))
+                              .ToArray();
+
+            return new JArray(servers);
         }
 
         public class TrustAllCertsPolicy
