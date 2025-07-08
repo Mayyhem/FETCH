@@ -1,7 +1,8 @@
-name: Build Installer
+name: Sign Binaries
 
 on:
   workflow_dispatch:
+  
     secrets:
       SM_HOST:
         required: false
@@ -13,9 +14,8 @@ on:
         required: true
       SM_CODE_SIGNING_CERT_SHA1_HASH:
         required: true
-
+        
 jobs:
-
   build:
     runs-on: ubuntu-latest
 
@@ -45,6 +45,7 @@ jobs:
           path: build_output
           
   sign:
+    needs: build
     runs-on: ubuntu-22.04 # INFO https://docs.digicert.com/en/digicert-keylocker/code-signing/sign-with-third-party-signing-tools/windows-applications/sign-authenticode-files-with-osslsigncode-using-openssl-pkcs11-engine.html#a-note-for-ubuntu-users-488674
     outputs:
       artifact-name: ${{ steps.set_artifact.outputs.artifact-name }}
