@@ -36,7 +36,7 @@ jobs:
 
       - name: Build project
         run: |
-          dotnet build SharpHound.csproj -p:BuildInstaller=false -o:build_output
+          dotnet build Sharphound.csproj -p:BuildInstaller=false -o:build_output
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
