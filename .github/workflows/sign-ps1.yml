@@ -90,7 +90,7 @@ jobs:
           printenv SM_CLIENT_CERT_FILE_B64 | base64 --decode > "$SM_CLIENT_CERT_FILE"
           trap 'rm $SM_CLIENT_CERT_FILE' EXIT
 
-          for artifact in SharpHound.exe SharpHoundCommonLib.dll; do
+          for artifact in SharpHound.exe; do
             smctl sign --fingerprint "${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}" --input "build_output/$artifact" --openssl-pkcs11-engine "${{ steps.pkcs11.outputs.engine }}" --pkcs11-module "${{ steps.pkcs11.outputs.module }}" --tool osslsigncode --verbose
             mv "build_output/$artifact" "signed_out/$artifact"
           done
@@ -109,14 +109,10 @@ jobs:
           trap 'rm $SM_CLIENT_CERT_FILE cert-chain.pem' EXIT
 
           osslsigncode verify -CAfile cert-chain.pem ./signed_out/SharpHound.exe
-          osslsigncode verify -CAfile cert-chain.pem ./signed_out/SharpHoundCommonLib.dll
 
       - name: Move necessary installer builder files in with signed
         run: |
           cp ./build_output/*.exe ./signed_out/
-          cp ./build_output/*.dll ./signed_out/
-          cp ./build_output/*.pdb ./signed_out/
-          cp ./build_output/SharpHoundCommonLib.dll ./signed_out/
 
       - name: Name artifact
         id: set_artifact
