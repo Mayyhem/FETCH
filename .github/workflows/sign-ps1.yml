@@ -2,20 +2,6 @@ name: Sign Binaries
 
 on:
   workflow_dispatch:
-  
-    secrets:
-      SM_HOST:
-        required: false
-      SM_API_KEY:
-        required: true
-      SM_CLIENT_CERT_FILE_B64:
-        required: true
-      SM_CLIENT_CERT_PASSWORD:
-        required: true
-      SM_CODE_SIGNING_CERT_SHA1_HASH:
-        required: false
-      SM_KEYPAIR_ALIAS:
-        required: true
         
 jobs:
   build:
@@ -82,6 +68,34 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y osslsigncode libengine-pkcs11-openssl
 
+      - name: Install Java for JSign
+        run: |
+          sudo apt-get install -y default-jre
+          
+      - name: Download and setup JSign
+        run: |
+          # Download JSign
+          wget https://github.com/ebourg/jsign/releases/download/6.0/jsign-6.0.jar -O jsign.jar
+          # Verify Java is working
+          java -version
+          
+      - name: Install PowerShell Core
+        run: |
+          # Update the list of packages
+          sudo apt-get update
+          # Install pre-requisite packages
+          sudo apt-get install -y wget apt-transport-https software-properties-common
+          # Download the Microsoft repository GPG keys
+          wget -q "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb"
+          # Register the Microsoft repository GPG keys
+          sudo dpkg -i packages-microsoft-prod.deb
+          # Update the list of packages after we added packages.microsoft.com
+          sudo apt-get update
+          # Install PowerShell
+          sudo apt-get install -y powershell
+          # Verify installation
+          pwsh --version
+
       - name: Install DigiCert Client Tools
         id: digicert
         uses: digicert/ssm-code-signing@v1.0.0
@@ -132,11 +146,15 @@ jobs:
           printenv SM_CLIENT_CERT_FILE_B64 | base64 --decode > "$SM_CLIENT_CERT_FILE"
           trap 'rm $SM_CLIENT_CERT_FILE' EXIT
 
-          for artifact in SharpHound.exe FETCH.ps1; do
-            echo "Signing $artifact..."
-            smctl sign --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --input "build_output/$artifact" --openssl-pkcs11-engine "${{ steps.pkcs11.outputs.engine }}" --pkcs11-module "${{ steps.pkcs11.outputs.module }}" --tool osslsigncode --verbose
-            mv "build_output/$artifact" "signed_out/$artifact"
-          done
+          # Sign SharpHound.exe with osslsigncode
+          echo "Signing SharpHound.exe with osslsigncode..."
+          smctl sign --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --input "build_output/SharpHound.exe" --openssl-pkcs11-engine "${{ steps.pkcs11.outputs.engine }}" --pkcs11-module "${{ steps.pkcs11.outputs.module }}" --tool osslsigncode --verbose
+          mv "build_output/SharpHound.exe" "signed_out/SharpHound.exe"
+          
+          # Sign FETCH.ps1 with JSign
+          echo "Signing FETCH.ps1 with JSign..."
+          smctl sign --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --input "build_output/FETCH.ps1" --tool jsign --jsign-jar-file ./jsign.jar --verbose
+          mv "build_output/FETCH.ps1" "signed_out/FETCH.ps1"
 
       - name: Verify signatures
         env:
@@ -156,5 +174,10 @@ jobs:
           smctl certificate download --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --format pem --chain --name cert-chain.pem
           trap 'rm $SM_CLIENT_CERT_FILE cert-chain.pem' EXIT
 
+          # Verify SharpHound.exe with osslsigncode
+          echo "Verifying SharpHound.exe signature..."
           osslsigncode verify -CAfile cert-chain.pem ./signed_out/SharpHound.exe
-          osslsigncode verify -CAfile cert-chain.pem ./signed_out/FETCH.ps1
+          
+          # Verify FETCH.ps1 with PowerShell
+          echo "Verifying FETCH.ps1 signature..."
+          pwsh -Command "Get-AuthenticodeSignature -FilePath ./signed_out/FETCH.ps1 | Format-List"
