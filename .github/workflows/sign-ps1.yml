@@ -2,6 +2,12 @@ name: Sign Binaries
 
 on:
   workflow_dispatch:
+    inputs:
+      debug_mode:
+        description: 'Enable debug mode'
+        required: false
+        default: 'false'
+        type: boolean
         
 jobs:
   build:
@@ -151,9 +157,11 @@ jobs:
           smctl sign --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --input "build_output/SharpHound.exe" --openssl-pkcs11-engine "${{ steps.pkcs11.outputs.engine }}" --pkcs11-module "${{ steps.pkcs11.outputs.module }}" --tool osslsigncode --verbose
           mv "build_output/SharpHound.exe" "signed_out/SharpHound.exe"
           
-          # Sign FETCH.ps1 with JSign
+          # Sign FETCH.ps1 with JSign via smctl
           echo "Signing FETCH.ps1 with JSign..."
-          smctl sign --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --input "build_output/FETCH.ps1" --tool jsign --jsign-jar-file ./jsign.jar --verbose
+          # Add jsign.jar to the PATH or use it directly
+          export PATH="$PATH:$(pwd)"
+          smctl sign --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --config-file "${{ steps.digicert.outputs.PKCS11_CONFIG }}" --input "build_output/FETCH.ps1" --tool jsign --verbose
           mv "build_output/FETCH.ps1" "signed_out/FETCH.ps1"
 
       - name: Verify signatures
