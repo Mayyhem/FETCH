@@ -44,11 +44,16 @@ jobs:
         run: |
           cp ./src/FETCH/FETCH.ps1 ./build_output/
 
+      - name: List build output contents
+        run: |
+          echo "Contents of build_output directory:"
+          ls -la ./build_output/
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: build
-          path: build_output
+          path: build_output/
           
   sign:
     needs: build
@@ -62,6 +67,11 @@ jobs:
         with:
           name: build
           path: ./build_output
+
+      - name: List downloaded artifact contents
+        run: |
+          echo "Contents of downloaded build_output directory:"
+          ls -la ./build_output/
 
       - name: Make signed output directory
         run: |
@@ -84,6 +94,24 @@ jobs:
           LIB_PKCS11="$(dpkg -L libengine-pkcs11-openssl | grep "libpkcs11.so")"
           echo "engine=$LIB_PKCS11" >> "$GITHUB_OUTPUT"
 
+      - name: Check for files before signing
+        run: |
+          echo "Checking for SharpHound.exe:"
+          if [ -f "build_output/SharpHound.exe" ]; then
+            echo "✓ SharpHound.exe found"
+          else
+            echo "✗ SharpHound.exe NOT found"
+            exit 1
+          fi
+          
+          echo "Checking for FETCH.ps1:"
+          if [ -f "build_output/FETCH.ps1" ]; then
+            echo "✓ FETCH.ps1 found"
+          else
+            echo "✗ FETCH.ps1 NOT found"
+            exit 1
+          fi
+
       - name: Sign Artifacts via DigiCert Signing Manager
         env:
           SM_HOST: ${{ secrets.SM_HOST }}
@@ -96,7 +124,8 @@ jobs:
           printenv SM_CLIENT_CERT_FILE_B64 | base64 --decode > "$SM_CLIENT_CERT_FILE"
           trap 'rm $SM_CLIENT_CERT_FILE' EXIT
 
-          for artifact in FETCH.ps1; do
+          for artifact in SharpHound.exe FETCH.ps1; do
+            echo "Signing $artifact..."
             smctl sign --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --input "build_output/$artifact" --openssl-pkcs11-engine "${{ steps.pkcs11.outputs.engine }}" --pkcs11-module "${{ steps.pkcs11.outputs.module }}" --tool osslsigncode --verbose
             mv "build_output/$artifact" "signed_out/$artifact"
           done
@@ -116,4 +145,3 @@ jobs:
 
           osslsigncode verify -CAfile cert-chain.pem ./signed_out/SharpHound.exe
           osslsigncode verify -CAfile cert-chain.pem ./signed_out/FETCH.ps1
-
