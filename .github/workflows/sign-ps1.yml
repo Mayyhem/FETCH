@@ -96,7 +96,7 @@ jobs:
           printenv SM_CLIENT_CERT_FILE_B64 | base64 --decode > "$SM_CLIENT_CERT_FILE"
           trap 'rm $SM_CLIENT_CERT_FILE' EXIT
 
-          for artifact in SharpHound.exe FETCH.ps1; do
+          for artifact in FETCH.ps1; do
             smctl sign --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --input "build_output/$artifact" --openssl-pkcs11-engine "${{ steps.pkcs11.outputs.engine }}" --pkcs11-module "${{ steps.pkcs11.outputs.module }}" --tool osslsigncode --verbose
             mv "build_output/$artifact" "signed_out/$artifact"
           done
