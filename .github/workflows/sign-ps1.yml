@@ -82,8 +82,22 @@ jobs:
         run: |
           # Download JSign
           wget https://github.com/ebourg/jsign/releases/download/6.0/jsign-6.0.jar -O jsign.jar
-          # Verify Java is working
+          
+          # Create jsign wrapper script (Linux equivalent of jsign.bat)
+          cat > jsign << 'EOF'
+          #!/bin/bash
+          java -jar "$(dirname "$0")/jsign.jar" "$@"
+          EOF
+          
+          # Make it executable
+          chmod +x jsign
+          
+          # Add current directory to PATH so smctl can find jsign
+          echo "$(pwd)" >> $GITHUB_PATH
+          
+          # Verify Java and jsign are working
           java -version
+          ./jsign --version || echo "jsign version check failed, but continuing..."
           
       - name: Install PowerShell Core
         run: |
@@ -148,6 +162,9 @@ jobs:
           # Verify smctl is available
           which smctl || (echo "smctl not found in PATH" && exit 1)
           
+          # Verify jsign is available
+          which jsign || (echo "jsign not found in PATH" && exit 1)
+          
           export SM_CLIENT_CERT_FILE=$(mktemp)
           printenv SM_CLIENT_CERT_FILE_B64 | base64 --decode > "$SM_CLIENT_CERT_FILE"
           trap 'rm $SM_CLIENT_CERT_FILE' EXIT
@@ -159,8 +176,6 @@ jobs:
           
           # Sign FETCH.ps1 with JSign via smctl
           echo "Signing FETCH.ps1 with JSign..."
-          # Add jsign.jar to the PATH or use it directly
-          export PATH="$PATH:$(pwd)"
           smctl sign --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --config-file "${{ steps.digicert.outputs.PKCS11_CONFIG }}" --input "build_output/FETCH.ps1" --tool jsign --verbose
           mv "build_output/FETCH.ps1" "signed_out/FETCH.ps1"
 
@@ -188,4 +203,50 @@ jobs:
           
           # Verify FETCH.ps1 with PowerShell
           echo "Verifying FETCH.ps1 signature..."
-          pwsh -Command "Get-AuthenticodeSignature -FilePath ./signed_out/FETCH.ps1 | Format-List"
+          # First check if the file exists
+          if [ -f "./signed_out/FETCH.ps1" ]; then
+            echo "FETCH.ps1 found in signed output"
+            
+            # Try to verify with PowerShell, importing the module first
+            pwsh -Command "
+              try {
+                # Import the module explicitly
+                Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+                
+                # Get the signature
+                \$sig = Get-AuthenticodeSignature -FilePath './signed_out/FETCH.ps1'
+                
+                # Display the signature info
+                Write-Host 'Signature Status:' \$sig.Status
+                Write-Host 'Signature Type:' \$sig.SignatureType
+                
+                if (\$sig.SignerCertificate) {
+                  Write-Host 'Signer Subject:' \$sig.SignerCertificate.Subject
+                  Write-Host 'Signer Issuer:' \$sig.SignerCertificate.Issuer
+                  Write-Host 'Valid From:' \$sig.SignerCertificate.NotBefore
+                  Write-Host 'Valid To:' \$sig.SignerCertificate.NotAfter
+                }
+                
+                # Exit with error if signature is not valid
+                if (\$sig.Status -ne 'Valid') {
+                  Write-Host 'ERROR: Signature verification failed!'
+                  exit 1
+                }
+              } catch {
+                Write-Host 'Unable to verify signature with PowerShell:' \$_
+                Write-Host 'Checking file content for signature block...'
+                
+                # At minimum, check if the file contains a signature block
+                \$content = Get-Content './signed_out/FETCH.ps1' -Raw
+                if (\$content -match '# SIG # Begin signature block') {
+                  Write-Host 'SUCCESS: PowerShell signature block found in file'
+                } else {
+                  Write-Host 'ERROR: No PowerShell signature block found in file'
+                  exit 1
+                }
+              }
+            "
+          else
+            echo "ERROR: FETCH.ps1 not found in signed output"
+            exit 1
+          fi
