@@ -45,6 +45,10 @@ jobs:
         with:
           name: build
           path: build_output
+
+      - name: Move FETCH PowerShell script into output directory for signing
+        run: |
+          cp ./src/FETCH/FETCH.ps1 ./build_output/
           
   sign:
     needs: build
@@ -58,10 +62,6 @@ jobs:
         with:
           name: build
           path: ./build_output
-
-      - name: Move FETCH PowerShell script into output directory for signing
-        run: |
-          cp ./src/FETCH/FETCH.ps1 ./build_output/
 
       - name: Make signed output directory
         run: |
