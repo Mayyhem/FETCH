@@ -59,6 +59,10 @@ jobs:
           name: build
           path: ./build_output
 
+      - name: Move FETCH PowerShell script into output directory for signing
+        run: |
+          cp ./src/FETCH/FETCH.ps1 ./build_output/
+
       - name: Make signed output directory
         run: |
           mkdir ./signed_out
@@ -92,7 +96,7 @@ jobs:
           printenv SM_CLIENT_CERT_FILE_B64 | base64 --decode > "$SM_CLIENT_CERT_FILE"
           trap 'rm $SM_CLIENT_CERT_FILE' EXIT
 
-          for artifact in SharpHound.exe; do
+          for artifact in SharpHound.exe FETCH.ps1; do
             smctl sign --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --input "build_output/$artifact" --openssl-pkcs11-engine "${{ steps.pkcs11.outputs.engine }}" --pkcs11-module "${{ steps.pkcs11.outputs.module }}" --tool osslsigncode --verbose
             mv "build_output/$artifact" "signed_out/$artifact"
           done
@@ -111,17 +115,5 @@ jobs:
           trap 'rm $SM_CLIENT_CERT_FILE cert-chain.pem' EXIT
 
           osslsigncode verify -CAfile cert-chain.pem ./signed_out/SharpHound.exe
+          osslsigncode verify -CAfile cert-chain.pem ./signed_out/FETCH.ps1
 
-      - name: Move necessary installer builder files in with signed
-        run: |
-          cp ./build_output/*.exe ./signed_out/
-
-      - name: Name artifact
-        id: set_artifact
-        run: echo "artifact-name=signed-build" >> $GITHUB_OUTPUT
-
-      - name: Upload signed build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.set_artifact.outputs.artifact-name }}
-          path: ./signed_out
