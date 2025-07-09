@@ -118,8 +118,16 @@ jobs:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
           SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          PKCS11_CONFIG: ${{ steps.digicert.outputs.PKCS11_CONFIG }}
+          SM_TOOLS_PATH: ${{ steps.digicert.outputs.SM_TOOLS_PATH }}
         shell: bash
         run: |
+          # Add smctl to PATH
+          export PATH="${SM_TOOLS_PATH}:$PATH"
+          
+          # Verify smctl is available
+          which smctl || (echo "smctl not found in PATH" && exit 1)
+          
           export SM_CLIENT_CERT_FILE=$(mktemp)
           printenv SM_CLIENT_CERT_FILE_B64 | base64 --decode > "$SM_CLIENT_CERT_FILE"
           trap 'rm $SM_CLIENT_CERT_FILE' EXIT
@@ -136,8 +144,13 @@ jobs:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
           SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          PKCS11_CONFIG: ${{ steps.digicert.outputs.PKCS11_CONFIG }}
+          SM_TOOLS_PATH: ${{ steps.digicert.outputs.SM_TOOLS_PATH }}
         shell: bash
         run: |
+          # Add smctl to PATH
+          export PATH="${SM_TOOLS_PATH}:$PATH"
+          
           export SM_CLIENT_CERT_FILE=$(mktemp)
           printenv SM_CLIENT_CERT_FILE_B64 | base64 --decode > "$SM_CLIENT_CERT_FILE"
           smctl certificate download --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --format pem --chain --name cert-chain.pem
