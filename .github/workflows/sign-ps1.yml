@@ -21,7 +21,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y mono-xbuild
-
       - name: Install gdb debugging for Mono
         if: runner.debug == '1'
         run: |
@@ -31,16 +30,13 @@ jobs:
       - name: Build project
         run: |
           dotnet build Sharphound.csproj -p:BuildInstaller=false -o:build_output
-
       - name: Move FETCH PowerShell script into output directory for signing
         run: |
           cp ./src/FETCH/FETCH.ps1 ./build_output/
-
       - name: List build output contents
         run: |
           echo "Contents of build_output directory:"
           ls -la ./build_output/
-
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -64,16 +60,13 @@ jobs:
         run: |
           echo "Contents of downloaded build_output directory:"
           ls -la ./build_output/
-
       - name: Make signed output directory
         run: |
           mkdir ./signed_out
-
       - name: Install osslsigncode & pkcs11 engine
         run: |
           sudo apt-get update
           sudo apt-get install -y osslsigncode libengine-pkcs11-openssl
-
       - name: Install Java for JSign
         run: |
           sudo apt-get install -y default-jre
@@ -115,26 +108,9 @@ jobs:
           sudo apt-get install -y powershell
           # Verify installation
           pwsh --version
-
       - name: Install DigiCert Client Tools
         id: digicert
         uses: digicert/ssm-code-signing@v1.0.0
-        
-      - name: Debug DigiCert Installation
-        run: |
-          echo "PKCS11_CONFIG: ${{ steps.digicert.outputs.PKCS11_CONFIG }}"
-          echo "SM_TOOLS_PATH: ${{ steps.digicert.outputs.SM_TOOLS_PATH }}"
-          echo "Checking if SM_TOOLS_PATH exists..."
-          if [ -d "${{ steps.digicert.outputs.SM_TOOLS_PATH }}" ]; then
-            echo "Directory exists. Contents:"
-            ls -la "${{ steps.digicert.outputs.SM_TOOLS_PATH }}"
-          else
-            echo "Directory does not exist!"
-          fi
-          echo "Looking for smctl in common locations..."
-          find /opt -name "smctl" 2>/dev/null || true
-          find /usr/local -name "smctl" 2>/dev/null || true
-          find $HOME -name "smctl" 2>/dev/null || true
 
       - name: Set PKCS#11 Paths
         id: pkcs11
@@ -143,7 +119,6 @@ jobs:
           echo "module=${SM_TOOLS_DIR}/smpkcs11.so" >> "$GITHUB_OUTPUT"
           LIB_PKCS11="$(dpkg -L libengine-pkcs11-openssl | grep "libpkcs11.so")"
           echo "engine=$LIB_PKCS11" >> "$GITHUB_OUTPUT"
-
       - name: Check for files before signing
         run: |
           echo "Checking for SharpHound.exe:"
@@ -161,7 +136,6 @@ jobs:
             echo "✗ FETCH.ps1 NOT found"
             exit 1
           fi
-
       - name: Sign Artifacts via DigiCert Signing Manager
         env:
           SM_HOST: ${{ secrets.SM_HOST }}
@@ -172,42 +146,15 @@ jobs:
           SM_TOOLS_PATH: ${{ steps.digicert.outputs.SM_TOOLS_PATH }}
         shell: bash
         run: |
-          # Try multiple ways to find and add smctl to PATH
-          if [ -n "${SM_TOOLS_PATH}" ] && [ -d "${SM_TOOLS_PATH}" ]; then
-            export PATH="${SM_TOOLS_PATH}:$PATH"
-            echo "Added SM_TOOLS_PATH to PATH: ${SM_TOOLS_PATH}"
-          fi
-          
-          # Also check the DigiCert tools directory directly
-          DIGICERT_TOOLS_DIR="/tmp/DigiCert One Signing Manager Tools/smtools-linux-x64"
-          if [ -d "${DIGICERT_TOOLS_DIR}" ]; then
-            export PATH="${DIGICERT_TOOLS_DIR}:$PATH"
-            echo "Added DigiCert tools directory to PATH: ${DIGICERT_TOOLS_DIR}"
-          fi
+          # Add smctl to PATH
+          export PATH="${SM_TOOLS_PATH}:$PATH"
           
           # Verify smctl is available
-          if ! command -v smctl &> /dev/null; then
-            echo "smctl not found in PATH. Searching for it..."
-            SMCTL_PATH=$(find /tmp -name "smctl" -type f -executable 2>/dev/null | head -1)
-            if [ -n "${SMCTL_PATH}" ]; then
-              export PATH="$(dirname "${SMCTL_PATH}"):$PATH"
-              echo "Found smctl at: ${SMCTL_PATH}"
-            else
-              echo "ERROR: Could not find smctl executable!"
-              exit 1
-            fi
-          fi
-          
-          # Verify smctl is now available
-          which smctl || (echo "smctl still not found in PATH" && exit 1)
-          
-          # Verify jsign is available
-          which jsign || (echo "jsign not found in PATH" && exit 1)
+          which smctl || (echo "smctl not found in PATH" && exit 1)
           
           export SM_CLIENT_CERT_FILE=$(mktemp)
           printenv SM_CLIENT_CERT_FILE_B64 | base64 --decode > "$SM_CLIENT_CERT_FILE"
           trap 'rm $SM_CLIENT_CERT_FILE' EXIT
-
           # Sign SharpHound.exe with osslsigncode
           echo "Signing SharpHound.exe with osslsigncode..."
           smctl sign --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --input "build_output/SharpHound.exe" --openssl-pkcs11-engine "${{ steps.pkcs11.outputs.engine }}" --pkcs11-module "${{ steps.pkcs11.outputs.module }}" --tool osslsigncode --verbose
@@ -217,7 +164,6 @@ jobs:
           echo "Signing FETCH.ps1 with JSign..."
           smctl sign --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --config-file "${{ steps.digicert.outputs.PKCS11_CONFIG }}" --input "build_output/FETCH.ps1" --tool jsign --verbose
           mv "build_output/FETCH.ps1" "signed_out/FETCH.ps1"
-
       - name: Verify signatures
         env:
           SM_HOST: ${{ secrets.SM_HOST }}
@@ -235,7 +181,6 @@ jobs:
           printenv SM_CLIENT_CERT_FILE_B64 | base64 --decode > "$SM_CLIENT_CERT_FILE"
           smctl certificate download --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --format pem --chain --name cert-chain.pem
           trap 'rm $SM_CLIENT_CERT_FILE cert-chain.pem' EXIT
-
           # Verify SharpHound.exe with osslsigncode
           echo "Verifying SharpHound.exe signature..."
           osslsigncode verify -CAfile cert-chain.pem ./signed_out/SharpHound.exe
