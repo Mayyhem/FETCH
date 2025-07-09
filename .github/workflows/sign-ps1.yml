@@ -13,6 +13,8 @@ on:
       SM_CLIENT_CERT_PASSWORD:
         required: true
       SM_CODE_SIGNING_CERT_SHA1_HASH:
+        required: false
+      SM_KEYPAIR_ALIAS:
         required: true
         
 jobs:
@@ -91,7 +93,7 @@ jobs:
           trap 'rm $SM_CLIENT_CERT_FILE' EXIT
 
           for artifact in SharpHound.exe; do
-            smctl sign --fingerprint "${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}" --input "build_output/$artifact" --openssl-pkcs11-engine "${{ steps.pkcs11.outputs.engine }}" --pkcs11-module "${{ steps.pkcs11.outputs.module }}" --tool osslsigncode --verbose
+            smctl sign --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --input "build_output/$artifact" --openssl-pkcs11-engine "${{ steps.pkcs11.outputs.engine }}" --pkcs11-module "${{ steps.pkcs11.outputs.module }}" --tool osslsigncode --verbose
             mv "build_output/$artifact" "signed_out/$artifact"
           done
 
@@ -105,7 +107,7 @@ jobs:
         run: |
           export SM_CLIENT_CERT_FILE=$(mktemp)
           printenv SM_CLIENT_CERT_FILE_B64 | base64 --decode > "$SM_CLIENT_CERT_FILE"
-          smctl certificate download --fingerprint "${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}" --format pem --chain --name cert-chain.pem
+          smctl certificate download --keypair-alias "${{ secrets.SM_KEYPAIR_ALIAS }}" --format pem --chain --name cert-chain.pem
           trap 'rm $SM_CLIENT_CERT_FILE cert-chain.pem' EXIT
 
           osslsigncode verify -CAfile cert-chain.pem ./signed_out/SharpHound.exe
