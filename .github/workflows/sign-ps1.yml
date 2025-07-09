@@ -119,6 +119,22 @@ jobs:
       - name: Install DigiCert Client Tools
         id: digicert
         uses: digicert/ssm-code-signing@v1.0.0
+        
+      - name: Debug DigiCert Installation
+        run: |
+          echo "PKCS11_CONFIG: ${{ steps.digicert.outputs.PKCS11_CONFIG }}"
+          echo "SM_TOOLS_PATH: ${{ steps.digicert.outputs.SM_TOOLS_PATH }}"
+          echo "Checking if SM_TOOLS_PATH exists..."
+          if [ -d "${{ steps.digicert.outputs.SM_TOOLS_PATH }}" ]; then
+            echo "Directory exists. Contents:"
+            ls -la "${{ steps.digicert.outputs.SM_TOOLS_PATH }}"
+          else
+            echo "Directory does not exist!"
+          fi
+          echo "Looking for smctl in common locations..."
+          find /opt -name "smctl" 2>/dev/null || true
+          find /usr/local -name "smctl" 2>/dev/null || true
+          find $HOME -name "smctl" 2>/dev/null || true
 
       - name: Set PKCS#11 Paths
         id: pkcs11
@@ -156,11 +172,34 @@ jobs:
           SM_TOOLS_PATH: ${{ steps.digicert.outputs.SM_TOOLS_PATH }}
         shell: bash
         run: |
-          # Add smctl to PATH
-          export PATH="${SM_TOOLS_PATH}:$PATH"
+          # Try multiple ways to find and add smctl to PATH
+          if [ -n "${SM_TOOLS_PATH}" ] && [ -d "${SM_TOOLS_PATH}" ]; then
+            export PATH="${SM_TOOLS_PATH}:$PATH"
+            echo "Added SM_TOOLS_PATH to PATH: ${SM_TOOLS_PATH}"
+          fi
+          
+          # Also check the DigiCert tools directory directly
+          DIGICERT_TOOLS_DIR="/tmp/DigiCert One Signing Manager Tools/smtools-linux-x64"
+          if [ -d "${DIGICERT_TOOLS_DIR}" ]; then
+            export PATH="${DIGICERT_TOOLS_DIR}:$PATH"
+            echo "Added DigiCert tools directory to PATH: ${DIGICERT_TOOLS_DIR}"
+          fi
           
           # Verify smctl is available
-          which smctl || (echo "smctl not found in PATH" && exit 1)
+          if ! command -v smctl &> /dev/null; then
+            echo "smctl not found in PATH. Searching for it..."
+            SMCTL_PATH=$(find /tmp -name "smctl" -type f -executable 2>/dev/null | head -1)
+            if [ -n "${SMCTL_PATH}" ]; then
+              export PATH="$(dirname "${SMCTL_PATH}"):$PATH"
+              echo "Found smctl at: ${SMCTL_PATH}"
+            else
+              echo "ERROR: Could not find smctl executable!"
+              exit 1
+            fi
+          fi
+          
+          # Verify smctl is now available
+          which smctl || (echo "smctl still not found in PATH" && exit 1)
           
           # Verify jsign is available
           which jsign || (echo "jsign not found in PATH" && exit 1)
