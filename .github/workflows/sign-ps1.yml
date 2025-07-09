@@ -40,15 +40,15 @@ jobs:
         run: |
           dotnet build Sharphound.csproj -p:BuildInstaller=false -o:build_output
 
+      - name: Move FETCH PowerShell script into output directory for signing
+        run: |
+          cp ./src/FETCH/FETCH.ps1 ./build_output/
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: build
           path: build_output
-
-      - name: Move FETCH PowerShell script into output directory for signing
-        run: |
-          cp ./src/FETCH/FETCH.ps1 ./build_output/
           
   sign:
     needs: build
