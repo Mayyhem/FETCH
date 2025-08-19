@@ -542,56 +542,109 @@ try {
         $existingSessions = Get-WmiObject -Namespace $WmiNamespace -Class $WmiClassPrefix`Sessions
     }
 
-    # Function to add or update a session in $collectedSessions
-    function AddOrUpdateSessions([ref]$collectedSessions, $newSession) {
+    function AddOrUpdateSessions($collectedSessions, $newSession, $existingSessions) {
 
-        $collectedSession = $collectedSessions.Value | Where-Object { $_.UserSID -eq $newSession.UserSID -and $_.ComputerSID -eq $newSession.ComputerSID }
+        # Debug the incoming session
+        Write-Log "DEBUG" "Processing new session: UserSID=$($newSession.UserSID), ComputerSID=$($newSession.ComputerSID), LastSeen=$($newSession.LastSeen)"
+
+        # Ensure we're working with an array
+        if ($null -eq $collectedSessions) {
+            $collectedSessions = @()
+        }
+        $sessionArray = @($collectedSessions)
+        
+        # Debug the current state
+        Write-Log "DEBUG" "Current sessions array count: $($sessionArray.Count)"
+
+        # Find matching session
+        $collectedSession = $sessionArray | Where-Object { 
+            $_ -is [hashtable] -and 
+            $_.UserSID -eq $newSession.UserSID -and 
+            $_.ComputerSID -eq $newSession.ComputerSID 
+        }
+        
         $existingSession = $existingSessions | Where-Object { $_.UserSID -eq $newSession.UserSID -and $_.ComputerSID -eq $newSession.ComputerSID }
+
+        # Debug what we found
+        if ($collectedSession) {
+            Write-Log "DEBUG" "Found collectedSession: UserSID=$($collectedSession.UserSID), ComputerSID=$($collectedSession.ComputerSID), LastSeen=$($collectedSession.LastSeen)"
+        } else {
+            Write-Log "DEBUG" "No collectedSession found for this UserSID/ComputerSID combination"
+        }
+
+        if ($existingSession) {
+            Write-Log "DEBUG" "Found existingSession in WMI: UserSID=$($existingSession.UserSID), ComputerSID=$($existingSession.ComputerSID), LastSeen=$($existingSession.LastSeen)"
+        } else {
+            Write-Log "DEBUG" "No existingSession found in WMI for this UserSID/ComputerSID combination"
+        }
 
         # Check if a session with the same UserSID and ComputerSID was already collected by the script
         if ($collectedSession) {
             Write-Log "VERBOSE" "Duplicate session found in collected data for $($newSession.UserSID) on $($newSession.ComputerSID)"
-            # If a session with the same UserSID and ComputerSID is found, compare LastSeen times and update if the new one is more recent
-            if ($newSession.LastSeen -gt $collectedSession.LastSeen) {
-                $collectedSession.LastSeen = $newSession.LastSeen
-                Write-Log "VERBOSE" "Keeping most recent session last seen at $($newSession.LastSeen)"
-                $collectedSessions.Value += $newSession
-            } else {
-                Write-Log "VERBOSE" "Keeping most recent session last seen at $($collectedSession.LastSeen)"
+            
+            # Convert LastSeen strings to DateTime objects for comparison
+            try {
+                $newSessionTime = [DateTime]::ParseExact($newSession.LastSeen, "yyyy-MM-dd HH:mm 'UTC'", [System.Globalization.CultureInfo]::InvariantCulture)
+                $collectedSessionTime = [DateTime]::ParseExact($collectedSession.LastSeen, "yyyy-MM-dd HH:mm 'UTC'", [System.Globalization.CultureInfo]::InvariantCulture)
+                
+                Write-Log "DEBUG" "Comparing times: new=$newSessionTime, existing=$collectedSessionTime"
+                
+                # If the new session is more recent, update the existing one
+                if ($newSessionTime -gt $collectedSessionTime) {
+                    $oldLastSeen = $collectedSession.LastSeen
+                    $collectedSession.LastSeen = $newSession.LastSeen
+                    Write-Log "VERBOSE" "Updated session LastSeen from $oldLastSeen to $($newSession.LastSeen)"
+                } else {
+                    Write-Log "VERBOSE" "Keeping existing session with LastSeen: $($collectedSession.LastSeen)"
+                }
+            } catch {
+                Write-Log "WARNING" "Could not parse LastSeen dates for comparison. NewSession.LastSeen='$($newSession.LastSeen)', CollectedSession.LastSeen='$($collectedSession.LastSeen)'. Error: $_"
+                # If we can't parse dates, keep the existing session
+                Write-Log "VERBOSE" "Keeping existing session due to date parsing error"
             }
-            Write-DebugVar collectedSession
+            
+            Write-Log "DEBUG" "Final collectedSession state: UserSID=$($collectedSession.UserSID), ComputerSID=$($collectedSession.ComputerSID), LastSeen=$($collectedSession.LastSeen)"
 
         } else {
             Write-Log "VERBOSE" "Found session for $($newSession.UserSID) on $($newSession.ComputerSID) at $($newSession.LastSeen)"
 
             if ($Wmi) {
-
                 # Check if a session with the same UserSID and ComputerSID already exists in WMI
                 if ($existingSession) {
                     Write-Log "VERBOSE" "Duplicate session found in WMI for $($newSession.UserSID) on $($newSession.ComputerSID)"
                     
                     # Ensure LastSeen formats match
-                    $newSessionWmiTimestamp = ([DateTime]::ParseExact($newSession.LastSeen, "yyyy-MM-dd HH:mm 'UTC'", [System.Globalization.CultureInfo]::InvariantCulture)).ToString("yyyyMMddHHmmss.ffffff+000")
+                    try {
+                        $newSessionWmiTimestamp = ([DateTime]::ParseExact($newSession.LastSeen, "yyyy-MM-dd HH:mm 'UTC'", [System.Globalization.CultureInfo]::InvariantCulture)).ToString("yyyyMMddHHmmss.ffffff+000")
 
-                    # If a session with the same UserSID and ComputerSID is found, compare LastSeen times and update if the new one is more recent
-                    if ($newSessionWmiTimestamp -gt $existingSession.LastSeen) {
-                        Write-Log "VERBOSE" "Keeping most recent session last seen at $($newSession.LastSeen)"
-                        $existingSession.Delete()
+                        Write-Log "DEBUG" "WMI comparison: new=$newSessionWmiTimestamp, existing=$($existingSession.LastSeen)"
+
+                        # If a session with the same UserSID and ComputerSID is found, compare LastSeen times and update if the new one is more recent
+                        if ($newSessionWmiTimestamp -gt $existingSession.LastSeen) {
+                            Write-Log "VERBOSE" "Deleting older WMI session and adding newer one. Old LastSeen: $($existingSession.LastSeen), New LastSeen: $($newSession.LastSeen)"
+                            $existingSession.Delete()
+                            Add-WmiClassInstance -WmiNamespace $WmiNamespace -WmiClassPrefix $WmiClassPrefix -CollectionType 'Sessions' -Properties $newSession
+                        } else {
+                            Write-Log "VERBOSE" "Keeping existing WMI session with LastSeen: $($existingSession.LastSeen)"
+                        }
+                    } catch {
+                        Write-Log "WARNING" "Could not parse LastSeen for WMI comparison. NewSession.LastSeen='$($newSession.LastSeen)', ExistingSession.LastSeen='$($existingSession.LastSeen)'. Error: $_"
+                        # If we can't parse, just add the new session
+                        Write-Log "VERBOSE" "Adding new session to WMI due to date parsing error"
                         Add-WmiClassInstance -WmiNamespace $WmiNamespace -WmiClassPrefix $WmiClassPrefix -CollectionType 'Sessions' -Properties $newSession
-                    } else {
-                        Write-Log "VERBOSE" "Keeping most recent session last seen at $($existingSession.LastSeen)"
                     }
-                    Write-DebugVar existingSession
-
                 } else {
                     Add-WmiClassInstance -WmiNamespace $WmiNamespace -WmiClassPrefix $WmiClassPrefix -CollectionType 'Sessions' -Properties $newSession
                 }
             } 
 
             # Add the session to the script output
-            $collectedSessions.Value += $newSession
-            Write-DebugVar newSession
+            $sessionArray += $newSession
+            Write-Log "DEBUG" "Added new session to collection: UserSID=$($newSession.UserSID), ComputerSID=$($newSession.ComputerSID), LastSeen=$($newSession.LastSeen)"
         }
+
+        # Return the updated array
+        return $sessionArray
     }
 
     # Get logged in accounts from HKEY_USERS hive
@@ -619,7 +672,7 @@ try {
                 ComputerSID = $thisComputerDomainSID
                 LastSeen = "{0:yyyy-MM-dd HH:mm} UTC" -f (Get-Date).ToUniversalTime()
             }
-            AddOrUpdateSessions ([ref]$collectedSessions) $newSession | Out-Null
+            $collectedSessions = AddOrUpdateSessions $collectedSessions $newSession $existingSessions
 
         } else {
             Write-Log "DEBUG" "Discarding local user with SID: $hkuSID"
@@ -651,7 +704,7 @@ try {
                     ComputerSID = $thisComputerDomainSID
                     LastSeen = "{0:yyyy-MM-dd HH:mm} UTC" -f $logonTime
                 }
-                AddOrUpdateSessions ([ref]$collectedSessions) $newSession | Out-Null
+                $collectedSessions = AddOrUpdateSessions $collectedSessions $newSession $existingSessions
 
             } else {
                 Write-Log "DEBUG" "Discarding local user with SID: $hkuSID"
@@ -661,7 +714,8 @@ try {
         Write-Log "INFO" "No logon events found in the lookback period."
     }
 
-    Write-Log "INFO" "Found sessions for $($collectedSessions.Count) domain principals"
+    $uniqueUserCount = @($collectedSessions | Select-Object UserSID -Unique).Count
+    Write-Log "INFO" "Found sessions for $uniqueUserCount unique domain principals ($($collectedSessions.Count) total sessions)"
 
     $sessions = @{
         "Results" = $collectedSessions
