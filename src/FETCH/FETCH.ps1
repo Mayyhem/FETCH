@@ -366,17 +366,18 @@ function Write-Log {
                 Write-Host "INFO: $logEntry"
                 if ($LogDir -ne 'off' -and $logFile) { $logEntry | Out-File -FilePath $logFile -Append }
             }
-            "OUTPUT" {
-                # Don't include timestamps, send raw message to stdout
-                Write-Output $Message
-                if ($LogDir -ne 'off' -and $logFile) { $logEntry | Out-File -FilePath $logFile -Append }
-            }
             "WARNING" { 
                 Write-Warning $logEntry 
                 if ($LogDir -ne 'off' -and $logFile) { $logEntry | Out-File -FilePath $logFile -Append }
             }
         }
-    } 
+    }
+
+    if ($Level -eq "OUTPUT") {
+        # Don't include timestamps, send raw message to stdout
+        Write-Output $Message
+        if ($LogDir -ne 'off' -and $logFile) { $logEntry | Out-File -FilePath $logFile -Append }
+    }
 
     # Always display errors and exit on error
     if ($Level -eq "ERROR") {
