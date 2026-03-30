@@ -593,8 +593,8 @@ namespace Sharphound {
 
                         // Collect hardware inventory data from the site database
                         else if (options.Fetch == "mssql")
-                        {
-                            if (!string.IsNullOrEmpty(options.SiteDatabase) && !string.IsNullOrEmpty(options.SiteCode))
+                        {   
+                            if (!string.IsNullOrEmpty(options.SiteDatabase) && (!string.IsNullOrEmpty(options.SiteCode) || !string.IsNullOrEmpty(options.DatabaseName)))
                             {
                                 // Query the site database for sessions, user rights, and local groups
                                 // Send computers files to the ingest API in batches
@@ -613,8 +613,8 @@ namespace Sharphound {
                             }
                             else
                             {
-                                if (string.IsNullOrEmpty(options.SiteDatabase)) Console.WriteLine("[!] SiteDatabase was not specified");
-                                if (string.IsNullOrEmpty(options.SiteCode)) Console.WriteLine("[!] SiteCode was not specified");
+                                if (string.IsNullOrEmpty(options.SiteDatabase)) Console.WriteLine("[!] SiteDatabase (target server) was not specified");
+                                if (string.IsNullOrEmpty(options.SiteCode) || string.IsNullOrEmpty(options.DatabaseName)) Console.WriteLine("[!] SiteCode or DatabaseName was not specified");
                                 Console.WriteLine("[!] Skipping SCCM mssql collection");
                             }
                         }

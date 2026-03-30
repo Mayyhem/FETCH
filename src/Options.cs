@@ -175,11 +175,20 @@ namespace Sharphound
         public string CollectionId { get; set; }
 
         // FETCH mssql
-        [Option(HelpText = "Specify an SCCM (ConfigMgr) site database for collection")]
+        [Option(HelpText = "Specify an SCCM (ConfigMgr) site database name for collection (default CM_<sitecode>)")]
+        public string DatabaseName { get; set; }
+
+        [Option(HelpText = "Specify a database server hostname/IP for collection (e.g., the SCCM site database)")]
         public string SiteDatabase { get; set; }
 
-        [Option(HelpText = "Specify the table name prefix", Default = "SpecterOps_BloodHound_")]
+        [Option(HelpText = "Specify the database custom table or view name prefix", Default = "SpecterOps_BloodHound_")]
         public string TablePrefix { get; set; }
+
+        [Option(HelpText = "Specify the prefix for the System_DISC table or view (if not default)", Default = "")]
+        public string SystemDiscPrefix { get; set; }
+
+        [Option(HelpText = "Specify the database where the System_DISC table or view resides (if not --databasename)", Default = "")]
+        public string SystemDiscDatabaseName { get; set; }
 
         // FETCH adminservice
 

@@ -398,13 +398,33 @@ namespace Sharphound
                 const int computersPerChunk = 300;
                 int totalComputersProcessed = 0;
 
-                logger.LogInformation($"Querying table: {tableName}");
+                string databaseName = "";
+                if (string.IsNullOrEmpty(options.DatabaseName) && !string.IsNullOrEmpty(options.SiteCode))
+                {
+                    databaseName = $"CM_{options.SiteCode}";
+                } 
+                else
+                {
+                    databaseName = options.DatabaseName;
+                }
+
+                string systemDiscDatabaseName = "";
+                if (string.IsNullOrEmpty(options.SystemDiscDatabaseName))
+                {
+                    systemDiscDatabaseName = databaseName;
+                }
+                else
+                {
+                    systemDiscDatabaseName = options.SystemDiscDatabaseName;
+                }
+
+                logger.LogInformation($"Querying {databaseName}.dbo.{options.TablePrefix}{tableName} and {systemDiscDatabaseName}.dbo.{options.SystemDiscPrefix}System_DISC");
 
                 bool hasMoreData = true;
                 while (hasMoreData)
                 {
-                    var computerData = await FetchNextComputerChunk(options.SiteDatabase, options.SiteCode, options.TablePrefix,
-                        tableName, options.LookbackDays, computersPerChunk, totalComputersProcessed);
+                    var computerData = await FetchNextComputerChunk(options.SiteDatabase, databaseName, options.SiteCode, 
+                        options.TablePrefix, systemDiscDatabaseName, options.SystemDiscPrefix, tableName, options.LookbackDays, computersPerChunk, totalComputersProcessed);
 
                     if (computerData.Count == 0)
                     {
@@ -429,10 +449,10 @@ namespace Sharphound
         }
 
         private static async Task<Dictionary<string, List<FetchQueryResult>>> FetchNextComputerChunk(
-            string siteDatabaseFqdn, string siteCode, string tablePrefix, string collectionType,
+            string databaseFqdn, string databaseName, string siteCode, string tablePrefix, string systemDiscDatabaseName, string systemDiscPrefix, string collectionType,
             int lookbackDays, int computersPerChunk, int offset)
         {
-            string connectionString = $"Server={siteDatabaseFqdn};Database=CM_{siteCode};Integrated Security=True;";
+            string connectionString = $"Server={databaseFqdn};Database={databaseName};Integrated Security=True;";
             var computerData = new Dictionary<string, List<FetchQueryResult>>();
 
             List<string> rowNames = GetRowNames(collectionType);
@@ -458,7 +478,7 @@ namespace Sharphound
             SD.Full_Domain_Name0
         FROM {tablePrefix}{collectionType}_DATA FC
         INNER JOIN TargetComputers TC ON FC.MachineID = TC.MachineID
-        LEFT JOIN System_DISC SD ON FC.MachineID = SD.ItemKey
+        LEFT JOIN {systemDiscDatabaseName}.dbo.{systemDiscPrefix}System_DISC SD ON FC.MachineID = SD.ItemKey
         WHERE FC.CollectionDatetime00 >= DATEADD(day, -@LookbackDays, GETDATE())
         ORDER BY FC.MachineID, FC.CollectionDatetime00 DESC";
 
