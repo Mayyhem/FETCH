@@ -153,7 +153,7 @@ namespace Sharphound
         [Option(HelpText = "Specify the path to a file containing FETCH environment variables")]
         public string EnvFile { get; set; }
 
-        [Option(HelpText = "Number of days behind to collect FETCH results", Default = 7)]
+        [Option(HelpText = "Number of days behind to collect FETCH results", Default = 14)]
         public int LookbackDays { get; set; }
 
         // FETCH cmpivot / mssql / adminservice
